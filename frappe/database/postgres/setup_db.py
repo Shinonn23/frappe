@@ -22,6 +22,7 @@ def setup_database():
 	if psql_version := root_conn.sql("SHOW server_version_num", as_dict=True):
 		semver_version_num = psql_version[0].get("server_version_num") or "140000"
 		if cint(semver_version_num) > 150000:
+			root_conn.sql(f'GRANT "{frappe.conf.db_name}" TO current_user')
 			root_conn.sql(f'ALTER DATABASE "{frappe.conf.db_name}" OWNER TO "{frappe.conf.db_user}"')
 	root_conn.close()
 
