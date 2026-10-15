@@ -53,10 +53,11 @@ class SubmissionQueue(Document):
 		table = frappe.qb.DocType("Submission Queue")
 		frappe.db.delete(table, filters=(table.creation < (Now() - Interval(days=days))))
 
-	def insert(self, to_be_queued_doc: Document, action: str):
+	def insert(self, to_be_queued_doc: Document, action: str, timeout: int = 600):
 		self.status = "Queued"
 		self.to_be_queued_doc = to_be_queued_doc
 		self.action_for_queuing = action
+		self.timeout_for_queuing = timeout
 		super().insert(ignore_permissions=True)
 
 	def lock(self):
@@ -79,7 +80,7 @@ class SubmissionQueue(Document):
 			"background_submission",
 			to_be_queued_doc=self.queued_doc,
 			action_for_queuing=self.action_for_queuing,
-			timeout=600,
+			timeout=self.timeout_for_queuing,
 			enqueue_after_commit=True,
 		)
 
@@ -120,7 +121,7 @@ class SubmissionQueue(Document):
 			message = _("Action {0} completed successfully on {1} {2}. View it {3}")
 
 		message_replacements = (
-			frappe.bold(action),
+			frappe.bold(action.removeprefix("_")),
 			frappe.bold(str(self.ref_doctype)),
 			frappe.bold(str(self.ref_docname)),
 		)
@@ -163,7 +164,7 @@ class SubmissionQueue(Document):
 		frappe.msgprint(_("Document Unlocked"))
 
 
-def queue_submission(doc: Document, action: str, alert: bool = True):
+def queue_submission(doc: Document, action: str, alert: bool = True, timeout: int = 600):
 	if existing_queue := frappe.db.get_value(
 		"Submission Queue", {"ref_doctype": doc.doctype, "ref_docname": doc.name, "status": "Queued"}
 	):
@@ -179,7 +180,7 @@ def queue_submission(doc: Document, action: str, alert: bool = True):
 	queue = frappe.new_doc("Submission Queue")
 	queue.ref_doctype = doc.doctype
 	queue.ref_docname = doc.name
-	queue.insert(doc, action)
+	queue.insert(doc, action, timeout=timeout)
 
 	if alert:
 		frappe.msgprint(
