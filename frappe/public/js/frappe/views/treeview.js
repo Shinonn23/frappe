@@ -184,7 +184,8 @@ frappe.views.TreeView = class TreeView {
 						me.root_label = me.opts.root_label;
 					}
 					me.set_title();
-					me.make_tree();
+					// Default filters run before onload initializes the tree toolbar.
+					queueMicrotask(() => me.make_tree());
 				};
 			}
 

@@ -176,9 +176,18 @@ frappe.msgprint = function (msg, title, is_minimizable, re_route) {
 	}
 
 	if (frappe.msg_dialog && data.re_route) {
+		const message_route = frappe.router.get_sub_path();
+		const current_route = frappe.get_route();
+		const prev_route = frappe.get_prev_route().slice();
 		frappe.msg_dialog.custom_onhide = function () {
+			// A previous dialog must not redirect a later visit, even to the same URL.
+			if (
+				frappe.router.get_sub_path() !== message_route ||
+				frappe.get_route() !== current_route
+			) {
+				return;
+			}
 			frappe.route_flags.replace_route = true;
-			let prev_route = frappe.get_prev_route();
 			if (prev_route.length == 0) frappe.set_route("");
 			frappe.set_route(prev_route);
 		};

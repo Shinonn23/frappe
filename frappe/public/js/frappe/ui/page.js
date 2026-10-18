@@ -639,7 +639,12 @@ frappe.ui.Page = class Page {
 			var $group = this.get_or_add_inner_group_button(group, align_right);
 			$(this.inner_toolbar).removeClass("hide");
 
-			if (!this.is_in_group_button_dropdown($group.find(".dropdown-menu"), "a", label)) {
+			const existing_button = this.is_in_group_button_dropdown(
+				$group.find(".dropdown-menu"),
+				"a",
+				label
+			);
+			if (!existing_button) {
 				return $(
 					`<a class="dropdown-item" href="#" onclick="return false;" data-label="${encodeURIComponent(
 						label
@@ -648,6 +653,7 @@ frappe.ui.Page = class Page {
 					.on("click", _action)
 					.appendTo($group.find(".dropdown-menu"));
 			}
+			return existing_button;
 		} else {
 			let button = this.inner_toolbar.find(
 				`button[data-label="${encodeURIComponent(label)}"]`

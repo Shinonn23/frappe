@@ -232,6 +232,8 @@ frappe.breadcrumbs = {
 			docname_title = __("New {0}", [__(doctype)]);
 			is_new_doc = true;
 		} else {
+			// Denied or pending documents are not available in the local cache.
+			if (!doc) return;
 			let title = frappe.model.get_doc_title(doc);
 			docname_title = __(title) || __(doc.name);
 			if (frappe.utils.is_html(docname_title)) {
