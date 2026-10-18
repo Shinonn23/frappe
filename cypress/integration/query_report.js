@@ -18,6 +18,37 @@ context("Query Report", () => {
 		}).as("todos");
 	});
 
+	it("preserves unchecked checkbox filters in report requests", () => {
+		cy.visit("/desk/query-report/Test ToDo Report");
+		cy.get(".datatable", { timeout: 60000 }).should("exist");
+
+		cy.window().then(({ frappe }) => {
+			let location_wise = 1;
+			const report = {
+				filters: [
+					{
+						df: {
+							fieldname: "show_location_wise_stock",
+							fieldtype: "Check",
+							default: 1,
+						},
+						get_value: () => location_wise,
+					},
+					{
+						df: { fieldname: "item_group", fieldtype: "Link" },
+						get_value: () => "",
+					},
+				],
+			};
+			const get_values = () =>
+				frappe.views.QueryReport.prototype.get_filter_values.call(report);
+
+			expect(get_values()).to.deep.equal({ show_location_wise_stock: 1 });
+			location_wise = 0;
+			expect(get_values()).to.deep.equal({ show_location_wise_stock: 0 });
+		});
+	});
+
 	it("add custom column in report", () => {
 		cy.visit("/desk/query-report/Permitted Documents For User");
 
