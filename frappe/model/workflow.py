@@ -204,23 +204,34 @@ def apply_workflow(doc: Document | str | dict, action: str):
 			frappe.enqueue(async_task, doc=doc, enqueue_after_commit=True)
 
 	new_docstatus = DocStatus(next_state.doc_status or 0)
-	if doc.docstatus.is_draft() and new_docstatus.is_draft():
-		doc.save()
-	elif doc.docstatus.is_draft() and new_docstatus.is_submitted():
-		from frappe.core.doctype.submission_queue.submission_queue import queue_submission
-		from frappe.utils.scheduler import is_scheduler_inactive
+	try:
+		if doc.docstatus.is_draft() and new_docstatus.is_draft():
+			doc.save()
+		elif doc.docstatus.is_draft() and new_docstatus.is_submitted():
+			from frappe.core.doctype.submission_queue.submission_queue import queue_submission
+			from frappe.utils.scheduler import is_scheduler_inactive
 
-		if doc.meta.queue_in_background and not is_scheduler_inactive():
-			queue_submission(doc, "Submit")
-			return
+			if doc.meta.queue_in_background and not is_scheduler_inactive():
+				queue_submission(doc, "Submit")
+				return
 
-		doc.submit()
-	elif doc.docstatus.is_submitted() and new_docstatus.is_submitted():
-		doc.save()
-	elif doc.docstatus.is_submitted() and new_docstatus.is_cancelled():
-		doc.cancel()
-	else:
-		frappe.throw(_("Illegal Document Status for {0}").format(next_state.state))
+			doc.submit()
+		elif doc.docstatus.is_submitted() and new_docstatus.is_submitted():
+			doc.save()
+		elif doc.docstatus.is_submitted() and new_docstatus.is_cancelled():
+			doc.cancel()
+		else:
+			frappe.throw(_("Illegal Document Status for {0}").format(next_state.state))
+
+	except frappe.QueryDeadlockError as exc:
+		# MariaDB 1020 can precede the normal stale-document check under concurrent approval.
+		database_error = exc.__cause__ or (exc.args[0] if exc.args else None)
+		if getattr(database_error, "args", ())[:1] == (1020,):
+			frappe.throw(
+				_("Document changed while applying workflow. Please reload and review its current state."),
+				frappe.TimestampMismatchError,
+			)
+		raise
 
 	doc.add_comment("Workflow", _(next_state.state))
 
