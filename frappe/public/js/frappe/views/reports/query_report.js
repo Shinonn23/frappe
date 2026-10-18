@@ -29,7 +29,7 @@ frappe.standard_pages["query-report"] = function () {
 
 frappe.views.QueryReport = class QueryReport extends frappe.views.BaseList {
 	show() {
-		this.init().then(() => this.load());
+		return this.init().then(() => this.load());
 	}
 
 	init() {
@@ -147,11 +147,11 @@ frappe.views.QueryReport = class QueryReport extends frappe.views.BaseList {
 
 		if (this.report_name !== frappe.get_route()[1]) {
 			// different report
-			this.load_report(route_options);
+			return this.load_report(route_options);
 		} else if (frappe.has_route_options()) {
 			// filters passed through routes
 			// so refresh report again
-			this.refresh_report(route_options);
+			return this.refresh_report(route_options);
 		} else {
 			// same report
 			// don't do anything to preserve state
@@ -164,13 +164,38 @@ frappe.views.QueryReport = class QueryReport extends frappe.views.BaseList {
 		this.route = frappe.get_route();
 		this.page_name = frappe.get_route_str();
 		this.report_name = this.route[1];
+		const report_route = this.route;
 		this.page_title = __(this.report_name);
+		this.page.clear_actions();
+		this.page.clear_custom_actions();
+		this.page.clear_menu();
+		this.refresh_button && this.refresh_button.remove();
+		this.clear_filters();
+		this.filters = [];
+		clearInterval(this.interval);
+		clearInterval(this.stale_report_interval);
+		this.last_ajax && this.last_ajax.abort();
+		this.hide_loading_screen();
+		this.$report_footer && this.$report_footer.remove();
+		this.toggle_report(false);
+		for (const area of [this.$report, this.$chart, this.$summary, this.$report_message]) {
+			area.empty();
+		}
+		this.$status.hide();
+		this.data = [];
+		this.raw_data = [];
+		this.columns = [];
+		this.report_doc = null;
+		this.report_settings = null;
+		this.chart = null;
+		this.chart_fields = null;
+		this.chart_options = null;
 		this.show_save = false;
 		this.menu_items = this.get_menu_items();
 		this.datatable = null;
 		this.export_dialog = null;
 
-		frappe.run_serially([
+		return frappe.run_serially([
 			() => this.get_report_doc(),
 			() => this.get_report_settings(),
 			() => this.add_translate_data_checkbox(),
@@ -179,7 +204,15 @@ frappe.views.QueryReport = class QueryReport extends frappe.views.BaseList {
 			() => this.refresh_report(route_options),
 			() => this.add_chart_buttons_to_toolbar(true),
 			() => this.add_card_button_to_toolbar(true),
-		]);
+		]).catch((error) => {
+			if (error?.status !== 403 || error.responseJSON?.exc_type !== "PermissionError") {
+				throw error;
+			}
+			if (this.route === report_route) {
+				this.report_name = null;
+				this.toggle_message(true, __("Not permitted"));
+			}
+		});
 	}
 
 	add_card_button_to_toolbar() {
@@ -427,10 +460,12 @@ frappe.views.QueryReport = class QueryReport extends frappe.views.BaseList {
 				resolve();
 			} else {
 				frappe
-					.xcall("frappe.desk.query_report.get_script", {
-						report_name: this.report_name,
+					.call({
+						method: "frappe.desk.query_report.get_script",
+						args: { report_name: this.report_name },
 					})
-					.then((settings) => {
+					.then((response) => {
+						const settings = response.message;
 						frappe.dom.eval(settings.script);
 						frappe.after_ajax(() => {
 							this.report_settings = this.get_local_report_settings(

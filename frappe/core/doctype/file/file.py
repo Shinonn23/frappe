@@ -1010,6 +1010,16 @@ def has_permission(doc, ptype=None, user=None, debug=False):
 	if user == "Administrator":
 		return True
 
+	if ptype in (None, "read", "select", "write", "delete"):
+		from frappe.core.doctype.prepared_report.prepared_report import has_prepared_report_file_permission
+
+		if ptype in ("write", "delete") and doc.name and frappe.db.exists("File", doc.name):
+			original = frappe.get_doc("File", doc.name)
+			if not has_prepared_report_file_permission(original, user):
+				return False
+		if not has_prepared_report_file_permission(doc, user):
+			return False
+
 	if not doc.is_private and ptype in ("read", "select"):
 		return True
 

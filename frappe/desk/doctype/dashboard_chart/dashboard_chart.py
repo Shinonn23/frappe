@@ -2,7 +2,7 @@
 # License: MIT. See LICENSE
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import frappe
@@ -230,8 +230,8 @@ def get_heatmap_chart_config(chart, filters, heatmap_year):
 	doctype = chart.document_type
 	datefield = chart.based_on
 	year = cint(heatmap_year) if heatmap_year else getdate(nowdate()).year
-	year_start_date = datetime.date(year, 1, 1).strftime("%Y-%m-%d")
-	next_year_start_date = datetime.date(year + 1, 1, 1).strftime("%Y-%m-%d")
+	year_start_date = date(year, 1, 1).strftime("%Y-%m-%d")
+	next_year_start_date = date(year + 1, 1, 1).strftime("%Y-%m-%d")
 
 	filters.append([doctype, datefield, ">", f"{year_start_date}"])
 	filters.append([doctype, datefield, "<", f"{next_year_start_date}"])
@@ -242,7 +242,7 @@ def get_heatmap_chart_config(chart, filters, heatmap_year):
 		timestamp_field = f"extract(epoch from timestamp {datefield})"
 
 	data = dict(
-		frappe.get_all(
+		frappe.get_list(
 			doctype,
 			fields=[
 				timestamp_field,
@@ -253,6 +253,7 @@ def get_heatmap_chart_config(chart, filters, heatmap_year):
 			as_list=1,
 			order_by=f"{datefield} asc",
 			ignore_ifnull=True,
+			parent_doctype=chart.parent_document_type,
 		)
 	)
 

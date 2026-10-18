@@ -16,13 +16,17 @@ def cache_source(function):
 	def wrapper(*args, **kwargs):
 		if kwargs.get("chart_name"):
 			chart = frappe.get_doc("Dashboard Chart", kwargs.get("chart_name"))
+			chart.check_permission("read")
 		else:
-			chart = kwargs.get("chart")
+			chart = frappe.parse_json(kwargs.get("chart"))
+			if chart and chart.get("name") and frappe.db.exists("Dashboard Chart", chart.name):
+				frappe.get_doc("Dashboard Chart", chart.name).check_permission("read")
 		no_cache = kwargs.get("no_cache")
-		if no_cache:
-			return function(chart=chart, no_cache=no_cache)
-		chart_name = frappe.parse_json(chart).name
-		cache_key = f"chart-data:{chart_name}"
+		# Report and custom source values need their source permissions checked on every request.
+		if no_cache or chart.chart_type in ("Report", "Custom"):
+			return function(*args, **kwargs)
+		chart_name = chart.name
+		cache_key = f"chart-data:{frappe.session.user}:{chart_name}"
 		if cint(kwargs.get("refresh")):
 			results = generate_and_cache_results(kwargs, function, cache_key, chart)
 		else:

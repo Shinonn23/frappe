@@ -97,7 +97,10 @@ frappe.views.BaseList = class BaseList {
 				(frappe.model.is_value_type(df.fieldtype) &&
 					df.in_list_view &&
 					frappe.perm.has_perm(this.doctype, df.permlevel, "read")) ||
-				(df.fieldtype === "Currency" && df.options && !df.options.includes(":")) ||
+				(df.fieldtype === "Currency" &&
+					df.options &&
+					!df.options.includes(":") &&
+					frappe.perm.has_perm(this.doctype, df.permlevel, "read")) ||
 				df.fieldname === "status"
 			);
 		});

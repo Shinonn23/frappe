@@ -87,6 +87,17 @@ class PreparedReport(Document):
 		)
 
 	def get_prepared_data(self, with_file_name=False):
+		from frappe.desk.query_report import get_report_doc
+		from frappe.desk.report_permissions import filter_cached_report_data
+
+		self.check_permission("read")
+		report = get_report_doc(self.report_name)
+		content, file_name = self._read_prepared_data()
+		data = filter_cached_report_data(report, self._parse_prepared_data(content), filters=self.filters)
+		content = frappe.as_json(data).encode("utf-8")
+		return (content, file_name) if with_file_name else content
+
+	def _read_prepared_data(self):
 		attachments = get_attachments(self.doctype, self.name)
 		if not attachments:
 			frappe.throw(_("No attachment found for the prepared report"), title=_("Attachment Not Found"))
@@ -99,9 +110,33 @@ class PreparedReport(Document):
 
 		attached_file = frappe.get_doc("File", attachment.name)
 
-		if with_file_name:
-			return (gzip.decompress(attached_file.get_content()), attachment.file_name)
-		return gzip.decompress(attached_file.get_content())
+		return gzip.decompress(attached_file.get_content()), attachment.file_name
+
+	def _parse_prepared_data(self, content):
+		data = json.loads(content)
+		if isinstance(data, list):
+			data = {"columns": frappe.parse_json(self.get("columns")) or (data[0] if data else []), "result": data}
+		return data
+
+	def can_download_raw_data(self, user=None, *, content=None):
+		from frappe.desk.query_report import get_report_doc
+		from frappe.desk.report_permissions import filter_cached_report_data
+
+		user = user or frappe.session.user
+		if not self.has_permission("read", user=user):
+			return False
+		try:
+			report = get_report_doc(self.report_name, user=user)
+		except (frappe.PermissionError, frappe.DoesNotExistError, frappe.ValidationError):
+			return False
+		if content is None:
+			content, _file_name = self._read_prepared_data()
+		data = self._parse_prepared_data(content)
+		try:
+			filtered = filter_cached_report_data(report, data, user=user, filters=self.filters)
+		except frappe.PermissionError:
+			return False
+		return filtered == data
 
 
 def generate_report(prepared_report):
@@ -279,6 +314,12 @@ def delete_prepared_reports(reports: str | list[dict[str, Any]]):
 	for report in reports:
 		prepared_report = frappe.get_doc("Prepared Report", report["name"])
 		if prepared_report.has_permission():
+			if (
+				frappe.session.user != "Administrator"
+				and prepared_report.status == "Completed"
+				and not prepared_report.can_download_raw_data()
+			):
+				frappe.throw(_("You do not have permission to delete this cached report."), frappe.PermissionError)
 			prepared_report.delete(ignore_permissions=True, delete_permanently=True)
 
 
@@ -315,6 +356,42 @@ def download_attachment(dn: str):
 	frappe.local.response.filename = file_name[:-3]
 	frappe.local.response.filecontent = data
 	frappe.local.response.type = "binary"
+
+
+@frappe.request_cache
+def _prepared_report_file_parents(file_url, content_hash):
+	or_filters = []
+	if file_url:
+		or_filters.append(["file_url", "=", file_url])
+	if content_hash:
+		or_filters.append(["content_hash", "=", content_hash])
+	if not or_filters:
+		return []
+	return frappe.get_all(
+		"File",
+		filters={"attached_to_doctype": "Prepared Report"},
+		or_filters=or_filters,
+		pluck="attached_to_name",
+	)
+
+
+def has_prepared_report_file_permission(doc, user=None):
+	parents = set(_prepared_report_file_parents(doc.file_url, doc.content_hash))
+	if doc.attached_to_doctype == "Prepared Report":
+		parents.add(doc.attached_to_name)
+	if not parents:
+		return True
+	# CSV attachments do not retain the source metadata needed to recheck their permissions.
+	if not (doc.file_url or "").endswith(".gz"):
+		return False
+	content = gzip.decompress(doc.get_content())
+	return all(
+		parent
+		and frappe.get_doc("Prepared Report", parent).can_download_raw_data(
+			user=user, content=content
+		)
+		for parent in parents
+	)
 
 
 def get_permission_query_condition(user):

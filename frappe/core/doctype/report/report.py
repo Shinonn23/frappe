@@ -8,7 +8,8 @@ import frappe
 from frappe import _, scrub
 from frappe.core.doctype.custom_role.custom_role import get_custom_allowed_roles
 from frappe.core.doctype.page.page import delete_custom_role
-from frappe.desk.query_report import _run
+from frappe.desk.query_report import _run, get_report_doc
+from frappe.desk.report_permissions import _report_user, filter_report_data, get_permitted_report_columns
 from frappe.desk.reportview import append_totals_row
 from frappe.model.document import Document
 from frappe.modules import make_boilerplate
@@ -137,7 +138,7 @@ class Report(Document):
 				roles = [{"role": d.role} for d in meta.permissions if d.permlevel == 0]
 				self.set("roles", roles)
 
-	def is_permitted(self):
+	def is_permitted(self, user=None):
 		"""Return True if `Has Role` is not set or the user is allowed."""
 		from frappe.utils import has_common
 
@@ -151,7 +152,7 @@ class Report(Document):
 		if not allowed:
 			return True
 
-		if has_common(frappe.get_roles(), allowed):
+		if has_common(frappe.get_roles(user), allowed):
 			return True
 
 	def update_report_json(self):
@@ -252,12 +253,14 @@ class Report(Document):
 		ignore_prepared_report=False,
 		are_default_filters=True,
 	):
-		if self.report_type in ("Query Report", "Script Report", "Custom Report"):
-			columns, result = self.run_query_report(
-				filters, user, ignore_prepared_report, are_default_filters
-			)
-		else:
-			columns, result = self.run_standard_report(filters, limit, user)
+		with _report_user(user):
+			get_report_doc(self.name, user=user)
+			if self.report_type in ("Query Report", "Script Report", "Custom Report"):
+				columns, result = self.run_query_report(
+					filters, user, ignore_prepared_report, are_default_filters
+				)
+			else:
+				columns, result = self.run_standard_report(filters, limit, user)
 
 		if as_dict:
 			result = self.build_data_dict(result, columns)
@@ -302,6 +305,12 @@ class Report(Document):
 	def run_standard_report(self, filters, limit, user):
 		params = json.loads(self.json)
 		columns = self.get_standard_report_columns(params)
+		permitted_columns = get_permitted_report_columns(
+			self, [{"fieldname": fieldname, "doctype": doctype} for fieldname, doctype in columns], user
+		)
+		columns = [(column["fieldname"], column["doctype"]) for column in permitted_columns]
+		if not columns:
+			return [], []
 		result = []
 		order_by, group_by, group_by_args = self.get_standard_report_order_by(params)
 
@@ -328,7 +337,8 @@ class Report(Document):
 		if params.get("add_totals_row"):
 			result = append_totals_row(result)
 
-		return columns, result
+		filtered = filter_report_data(self, {"columns": columns, "result": result}, user, filters)
+		return filtered["columns"], filtered["result"]
 
 	@staticmethod
 	def _format(parts):
@@ -418,6 +428,7 @@ class Report(Document):
 					}
 				)
 
+			column["doctype"] = doctype
 			report_columns.append(column)
 
 		return report_columns

@@ -4,6 +4,7 @@
 import datetime
 import json
 import os
+from copy import deepcopy
 from datetime import timedelta
 from typing import Any
 
@@ -11,6 +12,11 @@ import frappe
 import frappe.desk.reportview
 from frappe import _
 from frappe.core.utils import ljust_list
+from frappe.desk.report_permissions import (
+	ReportFieldPermissions,
+	filter_cached_report_data,
+	filter_report_data,
+)
 from frappe.desk.reportview import clean_params, parse_json
 from frappe.model.utils import render_include
 from frappe.modules import get_module_path, scrub
@@ -21,7 +27,7 @@ from frappe.utils.caching import request_cache
 from frappe.utils.xlsxutils import XLSXMetadata, XLSXStyleBuilder, handle_html, make_xlsx
 
 
-def get_report_doc(report_name):
+def get_report_doc(report_name, user=None):
 	doc = frappe.get_doc("Report", report_name)
 	doc.custom_columns = []
 	doc.custom_filters = []
@@ -40,13 +46,13 @@ def get_report_doc(report_name):
 		# Follow whatever the custom report has set for prepared report field
 		doc.prepared_report = custom_report_doc.prepared_report
 
-	if not doc.is_permitted():
+	if not doc.is_permitted(user=user):
 		frappe.throw(
 			_("You don't have access to Report: {0}").format(_(doc.name)),
 			frappe.PermissionError,
 		)
 
-	if not frappe.has_permission(doc.ref_doctype, "report"):
+	if not frappe.has_permission(doc.ref_doctype, "report", user=user):
 		frappe.throw(
 			_("You don't have permission to get a report on: {0}").format(_(doc.ref_doctype)),
 			frappe.PermissionError,
@@ -119,6 +125,8 @@ def generate_report_result(
 
 	columns, result, message, chart, report_summary, skip_total_row = ljust_list(res, 6)
 	columns = [get_column_as_dict(col) for col in (columns or [])]
+	source_columns = columns.copy()
+	field_permissions = ReportFieldPermissions(report, user, source_columns=source_columns)
 	report_column_names = [col["fieldname"] for col in columns]
 	# convert to list of dicts
 
@@ -140,12 +148,21 @@ def generate_report_result(
 
 	# all columns which are not in original report
 	report_custom_columns = [column for column in columns if column["fieldname"] not in report_column_names]
+	permitted_custom_columns = [
+		column for column in report_custom_columns if field_permissions.is_permitted(column)
+	]
 
 	if report_custom_columns:
-		result = add_custom_column_data(report_custom_columns, result)
+		result = add_custom_column_data(permitted_custom_columns, result)
 
 	if result:
-		result = get_filtered_data(report.ref_doctype, columns, result, user)
+		source_result = result
+		# Presentation changes cannot remove or retype the source links used for row permissions.
+		result = get_filtered_data(
+			report.ref_doctype, [*source_columns, *permitted_custom_columns], deepcopy(result), user
+		)
+		if result != source_result:
+			message = chart = report_summary = None
 
 	has_total_row = cint(report.add_total_row) and result and not skip_total_row
 
@@ -162,6 +179,7 @@ def generate_report_result(
 		"chart": chart,
 		"report_summary": report_summary,
 		"skip_total_row": skip_total_row or 0,
+		"add_total_row": bool(has_total_row),
 		"status": None,
 		"execution_time": frappe.cache.hget("report_execution_time", report.name) or 0,
 	}
@@ -182,7 +200,7 @@ def generate_report_result(
 				}
 			)
 
-	return return_dict
+	return field_permissions.filter_data(return_dict, filters)
 
 
 def normalize_result(result, columns):
@@ -285,8 +303,8 @@ def _run(
 	if not user:
 		user = frappe.session.user
 	validate_filters_permissions(report_name, filters, user, js_filters)
-	report = get_report_doc(report_name)
-	if not frappe.has_permission(report.ref_doctype, "report"):
+	report = get_report_doc(report_name, user=user)
+	if not frappe.has_permission(report.ref_doctype, "report", user=user):
 		frappe.msgprint(
 			_("Must have report permission to access this report."),
 			raise_exception=True,
@@ -326,7 +344,9 @@ def _run(
 		frappe.log_error("Report execution failed for: {}".format(report_name))
 		raise
 
-	result["add_total_row"] = report.add_total_row and not result.get("skip_total_row", False)
+	filter_data = filter_cached_report_data if is_prepared_report else filter_report_data
+	result = filter_data(report, result, user, filters)
+	result.setdefault("add_total_row", report.add_total_row and not result.get("skip_total_row", False))
 
 	if sbool(are_default_filters) and report.get("custom_filters"):
 		result["custom_filters"] = report.custom_filters
@@ -385,7 +405,7 @@ def get_prepared_report_result(report, filters, dn="", user=None):
 	def get_report_data(doc, data):
 		# backwards compatibility - prepared report used to have a columns field,
 		# we now directly fetch it from the result file
-		if doc.get("columns") or isinstance(data, list):
+		if isinstance(data, list) or (doc.get("columns") and "columns" not in data):
 			columns = (doc.get("columns") and json.loads(doc.columns)) or data[0]
 			data = {"result": data}
 		else:
@@ -946,6 +966,17 @@ def save_report(reference_report: str, report_name: str, columns: str | list, fi
 def get_filtered_data(ref_doctype, columns, data, user):
 	result = []
 	linked_doctypes = get_linked_doctypes(columns, data)
+	additional_links = []
+	for index, column in enumerate(columns):
+		column = get_column_as_dict(column)
+		if column.get("fieldtype") == "Link" and column.get("options") in linked_doctypes:
+			key = index if data and isinstance(data[0], list | tuple) else column["fieldname"]
+			if linked_doctypes[column["options"]] != key:
+				additional_links.append((column["options"], key))
+	linked_variants = [
+		linked_doctypes,
+		*(linked_doctypes | {doctype: key} for doctype, key in additional_links),
+	]
 	match_filters_per_doctype = get_user_match_filters(linked_doctypes, user=user)
 	shared = frappe.share.get_shared(ref_doctype, user)
 	columns_dict = get_columns_dict(columns)
@@ -960,28 +991,35 @@ def get_filtered_data(ref_doctype, columns, data, user):
 
 		# Apply masking to the fields
 		for field in ref_doctype_meta.get_masked_fields():
-			for row in data:
-				val = row.get(field.fieldname)
-				row[field.fieldname] = mask_field_value(field, val)
+			field_index = next(
+				(
+					index
+					for index in range(len(columns))
+					if columns_dict[index]["fieldname"] == field.fieldname
+				),
+				None,
+			)
+			for row_index, row in enumerate(data):
+				if isinstance(row, dict):
+					row[field.fieldname] = mask_field_value(field, row.get(field.fieldname))
+				elif field_index is not None and field_index < len(row):
+					if isinstance(row, tuple):
+						row = data[row_index] = list(row)
+					row[field_index] = mask_field_value(field, row[field_index])
 
 	if match_filters_per_doctype:
 		for row in data:
-			# Why linked_doctypes.get(ref_doctype)? because if column is empty, linked_doctypes[ref_doctype] is removed
+			shared_key = linked_doctypes.get(ref_doctype)
 			if (
-				linked_doctypes.get(ref_doctype)
+				shared_key is not None
 				and shared
-				and row.get(linked_doctypes[ref_doctype]) in shared
+				and (row.get(shared_key) if isinstance(row, dict) else row[shared_key]) in shared
 			):
 				result.append(row)
 
-			elif has_match(
-				row,
-				linked_doctypes,
-				match_filters_per_doctype,
-				ref_doctype,
-				if_owner,
-				columns_dict,
-				user,
+			elif all(
+				has_match(row, links, match_filters_per_doctype, ref_doctype, if_owner, columns_dict, user)
+				for links in linked_variants
 			):
 				result.append(row)
 	else:
@@ -1048,7 +1086,7 @@ def has_match(
 						break
 
 					if match:
-						match = has_unrestricted_read_access(doctype=ref_doctype, user=frappe.session.user)
+						match = has_unrestricted_read_access(doctype=ref_doctype, user=user)
 
 				# each doctype could have multiple conflicting user permission doctypes, hence using OR
 				# so that even if one of the sets allows a match, it is true
@@ -1101,10 +1139,10 @@ def get_linked_doctypes(columns, data):
 		df = columns_dict[idx]
 		if df.get("fieldtype") == "Link":
 			if data and isinstance(data[0], list | tuple):
-				linked_doctypes[df["options"]] = idx
+				linked_doctypes.setdefault(df["options"], []).append(idx)
 			else:
 				# dict
-				linked_doctypes[df["options"]] = df["fieldname"]
+				linked_doctypes.setdefault(df["options"], []).append(df["fieldname"])
 
 	# remove doctype if column is empty
 	columns_with_value = []
@@ -1122,8 +1160,12 @@ def get_linked_doctypes(columns, data):
 
 	items = list(linked_doctypes.items())
 
-	for doctype, key in items:
-		if key not in columns_with_value:
+	for doctype, keys in items:
+		for key in reversed(keys):
+			if key in columns_with_value:
+				linked_doctypes[doctype] = key
+				break
+		else:
 			del linked_doctypes[doctype]
 
 	return linked_doctypes
