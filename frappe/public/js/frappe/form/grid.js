@@ -1518,6 +1518,7 @@ export default class Grid {
 													: value;
 											}
 										});
+										me.on_row_upload?.(d, fieldnames, row);
 									}
 								}
 							});
