@@ -665,13 +665,23 @@ frappe.ui.Sidebar = class Sidebar {
 	set_workspace_sidebar(router) {
 		try {
 			const route = frappe.get_route();
+			const entity = this.entity_from_route(route);
 			let target;
 
-			if (route.length === 2 && frappe.boot.workspace_sidebar_item[route[1].toLowerCase()]) {
+			// a page that only shares a sidebar's name (e.g. dashboard-view/Accounts vs
+			// the Accounts module sidebar) stays in the current sidebar if it links there
+			const linked_from_current =
+				route[0] !== "Workspaces" &&
+				this.get_workspace_sidebars(entity).includes(this.sidebar_title);
+
+			if (
+				route.length === 2 &&
+				!linked_from_current &&
+				frappe.boot.workspace_sidebar_item[route[1].toLowerCase()]
+			) {
 				// route points directly at a workspace, e.g. List/<Workspace>
 				target = route[1];
 			} else {
-				const entity = this.entity_from_route(route);
 				const module = router?.meta?.module;
 				target = this.resolve_sidebar(entity, module);
 			}
