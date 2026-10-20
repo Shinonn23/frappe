@@ -28,7 +28,8 @@ frappe.ui.form.on("ToDo", {
 							frappe.set_route("List", "ToDo");
 						});
 					},
-					"fa fa-check",
+					null,
+					"btn-success"
 				);
 			} else {
 				frm.add_custom_button(
