@@ -61,11 +61,6 @@ frappe.ui.get_print_settings = function (
 					disabled: 0,
 				},
 			}),
-			onchange: function () {
-				dialog.set_value("include_filters", this.get_value() ? 0 : 1);
-				dialog.set_value("pick_columns", 0);
-				dialog.fields_dict.columns?.select_all(true);
-			},
 		});
 	}
 
@@ -90,7 +85,7 @@ frappe.ui.get_print_settings = function (
 				label: __("Select Columns"),
 				fieldtype: "MultiCheck",
 				fieldname: "columns",
-				depends_on: "eval: doc.pick_columns && !doc.print_format",
+				depends_on: "pick_columns",
 				columns: 2,
 				select_all: true,
 				options: pick_columns.map((df) => ({
@@ -101,7 +96,7 @@ frappe.ui.get_print_settings = function (
 		);
 	}
 
-	const dialog = frappe.prompt(
+	return frappe.prompt(
 		columns,
 		function (settings) {
 			settings = $.extend(print_settings, settings);
@@ -122,10 +117,6 @@ frappe.ui.get_print_settings = function (
 
 			if (settings.print_format) {
 				settings.pick_columns = 0;
-				settings.include_filters = 0;
-			}
-
-			if (!settings.pick_columns) {
 				settings.columns = null;
 			}
 
@@ -137,8 +128,6 @@ frappe.ui.get_print_settings = function (
 		},
 		title ? __(title) : __("Print Settings")
 	);
-
-	return dialog;
 };
 
 // qz tray connection wrapper
@@ -276,5 +265,51 @@ frappe.ui.form.qz_fail = function (e) {
 			indicator: "red",
 		},
 		20
+	);
+};
+
+frappe.provide("frappe.printing");
+frappe.printing.convert_to_builder = function (doc) {
+	const method = "frappe.printing.doctype.print_format.print_format.";
+	if (doc.standard === "Yes" && !frappe.boot.developer_mode) {
+		frappe.prompt(
+			{
+				fieldname: "name",
+				fieldtype: "Data",
+				label: __("New Format Name"),
+				reqd: 1,
+				default: __("{0} (New Builder)", [doc.name]),
+				description: __(
+					"{0} is a standard format and cannot be changed. A copy with this name will open in the new builder.",
+					[doc.name.bold()]
+				),
+			},
+			(values) => {
+				frappe
+					.xcall(method + "create_custom_format", {
+						doctype: doc.doc_type,
+						name: values.name,
+						based_on: doc.name,
+					})
+					.then((created) =>
+						frappe.set_route("print-format-builder-beta", created.name)
+					);
+			},
+			__("Convert to new builder"),
+			__("Create copy")
+		);
+		return;
+	}
+	frappe.confirm(
+		__(
+			"The layout of {0} will be rewritten for the new builder. The original layout is kept as a backup you can restore from the Print Format form. Continue?",
+			[doc.name.bold()]
+		),
+		() => {
+			frappe.xcall(method + "convert_to_builder", { name: doc.name }).then(() => {
+				frappe.model.clear_doc("Print Format", doc.name);
+				frappe.set_route("print-format-builder-beta", doc.name);
+			});
+		}
 	);
 };

@@ -3,13 +3,14 @@ from typing import ClassVar
 from bs4 import BeautifulSoup
 
 import frappe
-from frappe.utils.data import cint
+from frappe.utils.data import cint, flt
 from frappe.utils.pdf import get_host_url
 from frappe.utils.print_utils import convert_uom, parse_float_and_unit
 
 
 class Browser:
 	def __init__(self, generator, print_format, html, options):
+		self.print_format = print_format
 		self.is_print_designer = frappe.get_cached_value("Print Format", print_format, "print_designer")
 		self.debug_mode = frappe.conf.developer_mode and bool(frappe.form_dict.get("pdf_debug"))
 		self.browserID = frappe.utils.random_string(10)
@@ -145,6 +146,8 @@ class Browser:
 		# open header and footer pages
 		self._open_header_footer_pages()
 
+		self._inject_page_no_script(soup)
+
 		# get tags to pass to header template.
 		head = soup.find("head").contents
 		styles = soup.find_all("style")
@@ -184,6 +187,14 @@ class Browser:
 			for tag in soup.find_all(id=html_id):
 				tag.extract()
 
+	def _inject_page_no_script(self, soup):
+		"""Make clone_and_update available to the header and footer pages, which take
+		their <head> contents from the body document."""
+		path = frappe.get_app_path("frappe", "utils", "pdf_generator", "update_page_no.js")
+		tag = soup.new_tag("script")
+		tag.append(soup.new_string(frappe.read_file(path)))
+		soup.head.append(tag)
+
 	def try_async_header_footer_pdf(self):
 		if self.header_page and not self.is_header_dynamic:
 			self.header_page.generate_pdf(wait_for_pdf=False)
@@ -199,7 +210,7 @@ class Browser:
 		from frappe.utils.pdf import get_print_format_styles
 
 		soup: BeautifulSoup = self.soup
-		options = {}
+		options = self._get_print_format_page_margins()
 		print_format_css = get_print_format_styles(soup)
 		attrs = (
 			"margin-top",
@@ -215,6 +226,17 @@ class Browser:
 		options |= {style.name: style.value for style in print_format_css if style.name in attrs}
 		self.options.update(options)
 
+	def _get_print_format_page_margins(self):
+		from frappe.printing.doctype.print_format.classic_converter import uses_beta_renderer
+		from frappe.www.printview import get_page_rule_margins
+
+		if not self.print_format or not frappe.db.exists("Print Format", self.print_format):
+			return {}
+		print_format = frappe.get_cached_doc("Print Format", self.print_format)
+		if not print_format.css or uses_beta_renderer(print_format) or print_format.pdf_generator != "chrome":
+			return {}
+		return get_page_rule_margins(print_format.css)
+
 	def _set_default_page_size(self):
 		options = self.options
 		pdf_page_size = (
@@ -222,12 +244,10 @@ class Browser:
 		)
 
 		if pdf_page_size == "Custom":
-			options["page-height"] = options.get("page-height") or frappe.db.get_single_value(
-				"Print Settings", "pdf_page_height"
-			)
-			options["page-width"] = options.get("page-width") or frappe.db.get_single_value(
-				"Print Settings", "pdf_page_width"
-			)
+			for option, field in (("page-height", "pdf_page_height"), ("page-width", "pdf_page_width")):
+				if not options.get(option):
+					value = frappe.db.get_single_value("Print Settings", field)
+					options[option] = f"{flt(value)}mm" if value else None
 		else:
 			options["page-size"] = pdf_page_size
 
@@ -306,8 +326,10 @@ class Browser:
 		footer_with_bottom_margin = 0
 		footer_height = 0
 
+		header_owns_top_margin = bool(options.get("header-includes-top-margin"))
+
 		if self.header_page:
-			header_with_top_margin = self.header_height + margin_top
+			header_with_top_margin = self.header_height + (0 if header_owns_top_margin else margin_top)
 			header_spacing = options.get("header-spacing", 0)
 			header_with_spacing_top_margin = header_with_top_margin + header_spacing
 			self.header_page.options["paperHeight"] = (
@@ -319,16 +341,18 @@ class Browser:
 		margin_top = convert_uom(margin_top, "px", "in", only_number=True)
 
 		if self.header_page:
-			self.header_page.options["marginTop"] = margin_top
+			self.header_page.options["marginTop"] = 0 if header_owns_top_margin else margin_top
 		else:
 			self.body_page.options["marginTop"] = margin_top
 
 		if self.footer_page:
 			footer_height = self.footer_height
+			footer_with_bottom_margin = footer_height + margin_bottom
 			self.footer_page.options["paperHeight"] = (
-				convert_uom(footer_height, "px", "in", only_number=True) if footer_height else 0
+				convert_uom(footer_with_bottom_margin, "px", "in", only_number=True)
+				if footer_with_bottom_margin
+				else 0
 			)
-			footer_with_bottom_margin = self.footer_height + margin_bottom
 
 		margin_bottom = convert_uom(margin_bottom, "px", "in", only_number=True)
 

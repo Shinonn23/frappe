@@ -4,7 +4,6 @@ import { test } from "node:test";
 import vm from "node:vm";
 
 const pageSource = fs.readFileSync(new URL("../../public/js/frappe/ui/page.js", import.meta.url), "utf8");
-const filterSource = fs.readFileSync(new URL("../../public/js/frappe/list/list_filter.js", import.meta.url), "utf8");
 const method = (start, end) => pageSource.slice(pageSource.indexOf(`\t${start}(`), pageSource.indexOf(`\n\t${end}(`));
 
 function fixture() {
@@ -17,6 +16,8 @@ function fixture() {
       return new Query(this.node?.entries.get(label));
     }
     parent() { return new Query(this.node?.parent); }
+    closest() { return this.parent(); }
+    data() { return this; }
     addClass(value) { this.node?.classes.add(value); return this; }
     removeClass(value) { this.node?.classes.delete(value); return this; }
     hasClass(value) { return this.node?.classes.has(value); }
@@ -62,13 +63,12 @@ function fixture() {
     },
     btn_disable_enable() {},
   };
-  const context = { $, __: (label) => label, frappe: { provide() {}, user: { has_role: () => false }, is_mobile: () => false } };
+  const ui = { button: ({ attrs }) => new Query(node(attrs["data-label"])) };
+  const context = { $, __: (label) => label, es_opts_for_btn_type: () => ({}), frappe: { provide() {}, ui, user: { has_role: () => false }, is_mobile: () => false } };
   for (const [start, end] of [["is_in_group_button_dropdown", "clear_btn_group"], ["add_inner_button", "remove_inner_button"]]) {
     page[start] = vm.runInNewContext(`({${method(start, end)}}).${start}`, context);
   }
-  const ListFilter = vm.runInNewContext(filterSource.replace("export default class ListFilter", "class ListFilter") + "\nListFilter", context);
-  ListFilter.prototype.append_create_new_item = function (menu) { menu.append(new Query(node("create_new"))); };
-  return { page, groups, mobile, ListFilter };
+  return { page, groups, mobile, Query, node };
 }
 
 test("duplicate grouped buttons return the existing link without replacing its callback", () => {
@@ -102,15 +102,27 @@ test("ungrouped duplicate button return behavior remains unchanged", () => {
   assert.equal(f.page.inner_toolbar.node.entries.size, 1);
 });
 
-test("actual ListFilter overlapping refresh callbacks can render saved filters without an undefined button", async () => {
+// The saved-filters caller this guarded (ListFilter) no longer uses add_inner_button upstream;
+// this reproduces its pattern: every refresh re-adds the grouped button and an overlapping async
+// render later reads the returned button's menu through .parent().
+test("overlapping refreshes of a grouped button can render its menu without an undefined button", async () => {
   const f = fixture(); const resolvers = []; const renders = [];
-  const list = new f.ListFilter({ page: f.page, get_list_filters() {
-    const ready = new Promise((resolve) => resolvers.push(resolve));
-    return { then(callback) { const task = ready.then(callback); renders.push(task); return task; } };
-  } });
-  const first = list.saved_filters_btn;
-  list.refresh_list_filter();
-  assert.equal(list.saved_filters_btn.node, first.node);
+  const caller = {
+    refresh() {
+      const ready = new Promise((resolve) => resolvers.push(resolve));
+      renders.push(ready.then(() => this.render()));
+      this.btn = f.page.add_inner_button("Filters", [], "Saved Filters");
+    },
+    render() {
+      const $menu = this.btn.parent();
+      $menu.empty();
+      $menu.append(new f.Query(f.node("create_new")));
+    },
+  };
+  caller.refresh();
+  const first = caller.btn;
+  caller.refresh();
+  assert.equal(caller.btn.node, first.node);
   resolvers.forEach((resolve) => resolve());
   await Promise.all(renders);
   assert.equal(f.groups.get("Saved Filters").node.menu.entries.has("create_new"), true);

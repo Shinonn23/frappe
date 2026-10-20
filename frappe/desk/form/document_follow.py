@@ -232,17 +232,18 @@ def get_version(doctype, doc_name, frequency, user):
 
 
 def get_comments(doctype, doc_name, frequency, user):
+	# circular with frappe.model.document
+	from frappe.core.doctype.comment.comment import get_document_comments
 	from frappe.core.utils import html2text
 
 	timeline = []
-	comments = frappe.get_all(
-		"Comment",
-		filters=[
-			["reference_doctype", "=", doctype],
-			["reference_name", "=", doc_name],
-			*_get_filters(frequency, user),
-		],
+	# runs as the scheduler, so evaluate as the recipient
+	comments = get_document_comments(
+		doctype,
+		doc_name,
 		fields=["content", "modified", "modified_by", "comment_type"],
+		extra_filters=_get_filters(frequency, user),
+		user=user,
 	)
 	for comment in comments:
 		if comment.comment_type == "Like":
@@ -268,13 +269,6 @@ def get_comments(doctype, doc_name, frequency, user):
 def is_document_followed(doctype, doc_name, user):
 	return frappe.db.exists(
 		"Document Follow", {"ref_doctype": doctype, "ref_docname": str(doc_name), "user": user}
-	)
-
-
-@frappe.whitelist()
-def get_follow_users(doctype: str, doc_name: str | int):
-	return frappe.get_all(
-		"Document Follow", filters={"ref_doctype": doctype, "ref_docname": str(doc_name)}, fields=["user"]
 	)
 
 

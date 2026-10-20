@@ -26,12 +26,12 @@ function fixture({ rootQuery = false } = {}) {
   $.extend = Object.assign;
   $.each = (rows, fn) => rows.forEach((row, i) => fn(i, row));
   const frappe = {
-    provide() {}, treeview_settings: {}, views: { Factory: class {} }, flags: {},
-    boot: { user: { can_create: ["Account"] } },
+    provide() {}, treeview_settings: {}, views: { Factory: class {}, ListViewSelect: class {} }, flags: {},
+    boot: { user: { can_create: ["Account"] } }, meta: { has_field: () => false },
     get_meta() { return { fields: [{ fieldname: "account_type", options: "Bank" }, { fieldname: "account_category", options: "Account Category" }] }; },
     get_route_str() { return "Tree/Account"; },
   };
-  const erpnext = { utils: { get_tree_options: () => ["CD", "UB"], get_tree_default: () => "CD" } };
+  const erpnext = { accounts: {}, utils: { get_tree_options: () => ["CD", "UB"], get_tree_default: () => "CD" } };
   const context = vm.createContext({ frappe, erpnext, $, window: {}, __: (s) => s, queueMicrotask });
   vm.runInContext(accountSource, context);
   vm.runInContext(treeSource, context);

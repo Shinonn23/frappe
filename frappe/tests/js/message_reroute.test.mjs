@@ -3,7 +3,11 @@ import fs from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
 
-const source = fs.readFileSync(new URL("../../public/js/frappe/ui/messages.js", import.meta.url), "utf8").replace('import "./dialog";', "");
+// messages.js is bundled as an ES module; drop its imports (the dialog side-effect import and
+// has_unsafe_scheme, which only show_alert uses) so the script runs in a plain vm context.
+const source = fs
+	.readFileSync(new URL("../../public/js/frappe/ui/messages.js", import.meta.url), "utf8")
+	.replace(/^import\s[^;]*;$/gm, "");
 
 function fixture(previous = ["List", "Attendance Request", "List"]) {
 	let path = "attendance-request/DENIED-001";
@@ -23,7 +27,7 @@ function fixture(previous = ["List", "Attendance Request", "List"]) {
 			wrapper: { classList: { contains: () => false, add() {}, remove() {} } },
 		},
 	};
-	vm.runInNewContext(source, { frappe, window: {}, __: (value) => value, $: { isPlainObject: (value) => !!value && typeof value === "object" } });
+	vm.runInNewContext(source, { frappe, window: {}, has_unsafe_scheme: () => false, __: (value) => value, $: { isPlainObject: (value) => !!value && typeof value === "object" } });
 	return { frappe, calls, previous, setPath(value) { path = value; }, setCurrent(value) { current = value; },
 		register() { frappe.msgprint({ message: "Not permitted", re_route: true }); },
 		hide() { frappe.msg_dialog.custom_onhide(); } };
