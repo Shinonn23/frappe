@@ -28,8 +28,7 @@ frappe.ui.form.on("ToDo", {
 							frappe.set_route("List", "ToDo");
 						});
 					},
-					null,
-					"btn-success"
+					null
 				);
 			} else {
 				frm.add_custom_button(
