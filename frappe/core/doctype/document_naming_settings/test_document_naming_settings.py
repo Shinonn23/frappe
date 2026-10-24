@@ -3,6 +3,7 @@
 
 import frappe
 from frappe.core.doctype.doctype.test_doctype import new_doctype
+from frappe.core.doctype.document_naming_settings import series_sync
 from frappe.core.doctype.document_naming_settings.document_naming_settings import (
 	DocumentNamingSettings,
 )
@@ -107,3 +108,82 @@ class TestNamingSeries(IntegrationTestCase):
 			doctype=self.ns_doctype, some_fieldname="test doc with submit", amended_from=submittable_doc.name
 		).insert()
 		self.assertNotIn(submittable_doc.name, new_amended_doc.name)
+
+
+class TestSeriesSync(IntegrationTestCase):
+	"""The counter of a series follows the names that exist (series_sync.py)."""
+
+	def setUp(self):
+		self.series = f"{frappe.generate_hash(length=6)}-.###"
+		self.doctype = (
+			new_doctype(
+				fields=[
+					{
+						"label": "Series",
+						"fieldname": "naming_series",
+						"fieldtype": "Select",
+						"options": f"\n{self.series}",
+					}
+				],
+				autoname="naming_series:",
+			)
+			.insert()
+			.name
+		)
+		self.prefix = NamingSeries(self.series).get_prefix()
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def make(self, number):
+		doc = frappe.new_doc(self.doctype)
+		doc.naming_series = self.series
+		doc.name = f"{self.prefix}{number:03d}"
+		doc.flags.name_set = True
+		doc.insert(set_name=doc.name)
+		return doc
+
+	def row(self):
+		rows = series_sync.check(self.doctype)["rows"]
+		self.assertEqual(len(rows), 1)
+		return rows[0]
+
+	def test_status_of_a_counter(self):
+		self.assertEqual(series_sync.series_status(49, 51), series_sync.BEHIND)
+		self.assertEqual(series_sync.series_status(51, 51), series_sync.OK)
+		self.assertEqual(series_sync.series_status(60, 51), series_sync.AHEAD)
+
+	def test_a_document_renamed_past_the_counter_makes_the_series_behind(self):
+		first = self.make(1)
+		NamingSeries(self.series).update_counter(1)
+		self.assertEqual(self.row()["status"], series_sync.OK)
+
+		frappe.rename_doc(self.doctype, first.name, f"{self.prefix}051", force=True)
+
+		row = self.row()
+		self.assertEqual((row["counter"], row["highest"], row["status"]), (1, 51, series_sync.BEHIND))
+
+	def test_sync_raises_the_counter_to_the_highest_number_and_the_next_name_is_free(self):
+		self.make(51)
+		NamingSeries(self.series).update_counter(50)
+
+		done = series_sync.sync([{"doctype": self.doctype, "prefix": self.prefix}])
+
+		self.assertEqual([row["highest"] for row in done], [51])
+		self.assertEqual(self.row()["status"], series_sync.OK)
+		doc = frappe.new_doc(self.doctype)
+		doc.naming_series = self.series
+		doc.insert()
+		self.assertEqual(doc.name, f"{self.prefix}052")
+
+	def test_a_counter_ahead_of_the_names_is_left_alone(self):
+		self.make(1)
+		NamingSeries(self.series).update_counter(9)
+		self.assertEqual(series_sync.sync(), [])
+		self.assertEqual(self.row()["counter"], 9)
+
+	def test_only_the_selected_series_are_synced(self):
+		self.make(51)
+		NamingSeries(self.series).update_counter(50)
+		self.assertEqual(series_sync.sync([]), [])
+		self.assertEqual(self.row()["status"], series_sync.BEHIND)

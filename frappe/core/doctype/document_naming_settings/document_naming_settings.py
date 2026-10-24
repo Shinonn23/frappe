@@ -5,6 +5,7 @@
 import frappe
 from frappe import _
 from frappe.core.doctype.doctype.doctype import validate_series
+from frappe.core.doctype.document_naming_settings import series_sync
 from frappe.model.document import Document
 from frappe.model.naming import NamingSeries
 from frappe.permissions import get_doctypes_with_read
@@ -32,6 +33,7 @@ class DocumentNamingSettings(Document):
 		naming_series_options: DF.Text | None
 		prefix: DF.Autocomplete | None
 		series_preview: DF.Text | None
+		sync_transaction_type: DF.Autocomplete | None
 		transaction_type: DF.Autocomplete | None
 		try_naming_series: DF.Data | None
 		user_must_always_select: DF.Check
@@ -205,6 +207,27 @@ class DocumentNamingSettings(Document):
 			row.save()
 
 		frappe.msgprint(_("Amendment naming rules updated."), indicator="green", alert=True)
+
+	@frappe.whitelist()
+	def check_series_sync(self, doctype: str | None = None):
+		"""Every series with its counter and its highest existing number (see series_sync.py)."""
+		frappe.only_for("System Manager")
+		return series_sync.check(doctype or self.sync_transaction_type or None)
+
+	@frappe.whitelist()
+	def sync_series(self, selected=None, doctype: str | None = None):
+		"""Raise the counter of the series that are behind: the selected ones, or all of them."""
+		frappe.only_for("System Manager")
+		done = series_sync.sync(
+			frappe.parse_json(selected) if selected is not None else None,
+			doctype or self.sync_transaction_type or None,
+		)
+		frappe.msgprint(
+			_("{0} series counters synced").format(len(done)),
+			alert=True,
+			indicator="green" if done else "blue",
+		)
+		return done
 
 	@frappe.whitelist()
 	def update_series_start(self):
