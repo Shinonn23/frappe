@@ -8,8 +8,10 @@ document renamed past the counter (SINV-0050 to SINV-0051 with the counter at 50
 restored from another site makes the next document get a name that exists, and saving fails until the counter has
 moved on. `check` lists the series whose counter is behind, `sync` raises it.
 
-Only the prefix of today is checked for a series with dates (YY, MM...), since a new document is always named from
-today's date. A series whose prefix has a field in it ({customer}) cannot be evaluated and is reported as skipped.
+A series can have a prefix for every month or year (SINV-.YYYY.-), or one that depends on the document (an Employee
+numbered by its Date of Joining), so the names are read back into their prefixes: the prefix of today and every prefix
+that already has a counter are listed. A prefix with a part that stands for a field ({customer}) is found the same
+way, from the names.
 """
 
 import re
@@ -21,6 +23,16 @@ from frappe.utils import cint
 BEHIND = "behind"
 OK = "ok"
 AHEAD = "ahead"
+
+# What the parts of a series are in a name; a part that is none of these is text and stands for itself.
+PART_PATTERNS = {
+	"YY": r"\d{2}",
+	"YYYY": r"\d{4}",
+	"MM": r"\d{2}",
+	"DD": r"\d{2}",
+	"JJJ": r"\d{3}",
+	"WW": r"\d{2}",
+}
 
 
 def series_status(counter: int, highest: int) -> str:
@@ -56,47 +68,116 @@ def series_templates(doctype: str) -> list[str]:
 	return []
 
 
-def highest_number(doctype: str, prefix: str) -> int:
-	"""The highest running number among the names of the form <prefix><digits>."""
-	pattern = re.compile(rf"^{re.escape(prefix)}(\d+)$")
+def split_series(template: str) -> tuple[list[str], int]:
+	"""The parts before the running number, and how many digits it has at least."""
+	parts = [part for part in NamingSeries(template).series.split(".") if part]
+	for index, part in enumerate(parts):
+		if part.startswith("#"):
+			return parts[:index], len(part)
+	raise ValueError(f"The series {template} has no running number.")
+
+
+def _hook_part_pattern(part: str, method: str) -> str:
+	"""A part an app defines (naming_series_variables) is as wide as its value today; unknown if it cannot be asked."""
+	try:
+		return f".{{{len(str(frappe.get_attr(method)(None, part)))}}}"
+	except Exception:
+		return r".+?"
+
+
+def name_pattern(template: str) -> tuple[re.Pattern, str]:
+	"""A regular expression with the groups `prefix` and `number` for the names of a series, and the text every
+	such name starts with (to ask the database for fewer names)."""
+	parts, digits = split_series(template)
+	hooks = frappe.get_hooks("naming_series_variables", {})
+	pieces, head, literal = [], "", True
+	for part in parts:
+		if part in PART_PATTERNS:
+			pieces.append(PART_PATTERNS[part])
+			literal = False
+		elif part in hooks:
+			pieces.append(_hook_part_pattern(part, hooks[part][0]))
+			literal = False
+		elif part.startswith("{"):
+			pieces.append(r".+?")
+			literal = False
+		else:
+			pieces.append(re.escape(part))
+			if literal:
+				head += part
+	return re.compile(rf"^(?P<prefix>{''.join(pieces)})(?P<number>\d{{{digits},}})$"), head
+
+
+def highest_by_prefix(pattern: re.Pattern, names: list[str]) -> dict[str, int]:
+	"""The highest running number per prefix among the names that follow the series."""
+	highest: dict[str, int] = {}
+	for name in names:
+		match = pattern.match(name or "")
+		if match:
+			key = match.group("prefix")
+			highest[key] = max(highest.get(key, 0), int(match.group("number")))
+	return highest
+
+
+def rows_of(doctype: str, template: str, counters: dict[str, int]) -> list[dict]:
+	"""One row per prefix of the series: that of today, and each one that has a counter and names."""
+	pattern, head = name_pattern(template)
 	names = frappe.get_all(
-		doctype, filters={"name": ("like", f"{prefix}%")}, pluck="name", limit_page_length=0
+		doctype, filters={"name": ("like", f"{head}%")} if head else None, pluck="name", limit_page_length=0
 	)
-	return max((int(m.group(1)) for m in map(pattern.match, names) if m), default=0)
+	highest = highest_by_prefix(pattern, names)
+	try:
+		today = NamingSeries(template).get_prefix()
+	except Exception:
+		frappe.clear_last_message()
+		today = None
+	keys = {key for key in highest if key in counters}
+	if today and "{" not in today:
+		keys.add(today)
+	rows = []
+	for key in sorted(keys):
+		counter, top = counters.get(key, 0), highest.get(key, 0)
+		rows.append(
+			{
+				"doctype": doctype,
+				"series": template,
+				"prefix": key,
+				"counter": counter,
+				"highest": top,
+				"status": series_status(counter, top),
+			}
+		)
+	return rows
 
 
 def check(doctype: str | None = None) -> dict:
 	"""Every series (of one document type, or of all) with its counter, its highest number and its status."""
+	counters = {
+		name: cint(current) for name, current in frappe.db.sql("select name, `current` from `tabSeries`")
+	}
 	rows, skipped, seen = [], [], set()
 	for dt in [doctype] if doctype else doctypes_with_series():
 		if not frappe.db.exists("DocType", dt):
 			continue
 		for template in series_templates(dt):
 			try:
-				prefix = NamingSeries(template).get_prefix()
+				found = rows_of(dt, template, counters)
 			except Exception:
 				frappe.clear_last_message()
 				skipped.append({"doctype": dt, "series": template, "reason": "invalid"})
 				continue
-			if "{" in prefix:
-				skipped.append({"doctype": dt, "series": template, "reason": "field in prefix"})
-				continue
-			if (dt, prefix) in seen:
-				continue
-			seen.add((dt, prefix))
-			counter = cint(frappe.db.get_value("Series", prefix, "current", order_by="name"))
-			highest = highest_number(dt, prefix)
-			rows.append(
-				{
-					"doctype": dt,
-					"series": template,
-					"prefix": prefix,
-					"counter": counter,
-					"highest": highest,
-					"status": series_status(counter, highest),
-				}
-			)
+			for row in found:
+				if (dt, row["prefix"]) not in seen:
+					seen.add((dt, row["prefix"]))
+					rows.append(row)
 	return {"rows": rows, "skipped": skipped}
+
+
+def set_counter(prefix: str, value: int) -> None:
+	Series = frappe.qb.DocType("Series")
+	if frappe.db.get_value("Series", prefix, "name", order_by="name") is None:
+		frappe.qb.into(Series).insert(prefix, 0).columns("name", "current").run()
+	frappe.qb.update(Series).set(Series.current, cint(value)).where(Series.name == prefix).run()
 
 
 def sync(selected: list[dict] | None = None, doctype: str | None = None) -> list[dict]:
@@ -110,7 +191,7 @@ def sync(selected: list[dict] | None = None, doctype: str | None = None) -> list
 			continue
 		if chosen is not None and (row["doctype"], row["prefix"]) not in chosen:
 			continue
-		NamingSeries(row["series"]).update_counter(row["highest"])
+		set_counter(row["prefix"], row["highest"])
 		settings.create_version_log_for_change(row["prefix"], row["counter"], row["highest"])
 		done.append(row)
 	return done
