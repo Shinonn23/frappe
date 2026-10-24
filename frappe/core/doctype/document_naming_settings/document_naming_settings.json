@@ -20,6 +20,12 @@
   "prefix",
   "current_value",
   "update_series_start",
+  "sync_series_section",
+  "sync_transaction_type",
+  "check_series_sync",
+  "series_sync_html",
+  "sync_selected",
+  "sync_all",
   "amended_documents_section",
   "default_amend_naming",
   "amend_naming_override",
@@ -138,13 +144,47 @@
    "fieldtype": "Button",
    "label": "Update Amendment Naming",
    "options": "update_amendment_rule"
+  },
+  {
+   "fieldname": "sync_series_section",
+   "fieldtype": "Section Break",
+   "label": "Sync Series Counters",
+   "description": "A counter that is behind the numbers already used (after a rename or an import) gives the next document a name that exists."
+  },
+  {
+   "fieldname": "sync_transaction_type",
+   "fieldtype": "Autocomplete",
+   "label": "Document Type",
+   "description": "Leave empty to check every series of the system."
+  },
+  {
+   "fieldname": "check_series_sync",
+   "fieldtype": "Button",
+   "label": "Check Series"
+  },
+  {
+   "fieldname": "series_sync_html",
+   "fieldtype": "HTML",
+   "label": "Series Counters"
+  },
+  {
+   "fieldname": "sync_selected",
+   "fieldtype": "Button",
+   "label": "Sync Selected",
+   "hidden": 1
+  },
+  {
+   "fieldname": "sync_all",
+   "fieldtype": "Button",
+   "label": "Sync All Behind",
+   "hidden": 1
   }
  ],
  "hide_toolbar": 1,
  "icon": "fa fa-sort-by-order",
  "issingle": 1,
  "links": [],
- "modified": "2024-11-15 18:04:40.268244",
+ "modified": "2026-10-24 17:00:00.000000",
  "modified_by": "Administrator",
  "module": "Core",
  "name": "Document Naming Settings",
