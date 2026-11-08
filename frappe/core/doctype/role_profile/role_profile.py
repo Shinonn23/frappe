@@ -27,7 +27,12 @@ def get_user_permissions(user):
 	if not providers:
 		return None
 	frappe.get_doc("User", user).check_permission("read")
-	return frappe.get_attr(providers[-1])(user=user)
+	data = frappe.get_attr(providers[-1])(user=user)
+	if data is None:
+		return None
+	from frappe.permissions import AUTOMATIC_ROLES
+
+	return {**data, "implicit_roles": list(AUTOMATIC_ROLES)}
 
 
 class RoleProfile(Document):

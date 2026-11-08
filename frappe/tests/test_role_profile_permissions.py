@@ -72,3 +72,26 @@ class TestPermissionProviders(unittest.TestCase):
 			self.assertEqual(
 				user.get_role_editor_data(), {"roles": ["Sales User"], "managed_roles": ["Workflow Role"]}
 			)
+
+	def test_user_summary_adds_native_implicit_role_metadata_without_mutating_provider_data(self):
+		payload = {"roles": [{"role": "All"}, {"role": "Sales User"}]}
+		provider = MagicMock(return_value=payload)
+		with (
+			patch.object(frappe, "get_hooks", return_value=["app.provider"]),
+			patch.object(frappe, "get_doc") as doc,
+			patch.object(frappe, "get_attr", return_value=provider),
+		):
+			result = role_profile.get_user_permissions("user")
+			doc.return_value.check_permission.assert_called_once_with("read")
+		self.assertIn("All", result["implicit_roles"])
+		self.assertEqual(result["roles"], payload["roles"])
+		self.assertNotIn("implicit_roles", payload)
+		provider.assert_called_once_with(user="user")
+
+	def test_absent_authorized_user_provider_keeps_native_editor_available(self):
+		with (
+			patch.object(frappe, "get_hooks", return_value=["app.provider"]),
+			patch.object(frappe, "get_doc"),
+			patch.object(frappe, "get_attr", return_value=MagicMock(return_value=None)),
+		):
+			self.assertIsNone(role_profile.get_user_permissions("user"))

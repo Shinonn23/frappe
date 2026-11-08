@@ -67,5 +67,11 @@ head seats. The User summary shows saved authority and current department roots 
 to refresh it. Users with profiles see the summary instead of the disabled native role checkbox list, while users
 without profiles retain direct-role editing. The summary is not a document-specific authorization verdict.
 
+The User summary uses native `frappe.ui.FieldGroup` sections and read-only Table/Grid controls. Workflow conditions
+and notification routing share one row; opening the row shows full scope, ceilings and source profiles. Identical
+handoff configurations combine their source profiles without merging different conditions. Frappe supplies
+`implicit_roles` alongside provider data so automatic System Roles can appear in a separate collapsed section.
+These viewing controls use a separate document and static rows; inspecting permissions never changes the User.
+
 Workflow Settings remains global routing and validation configuration. The preview does not remove those settings
 or change their meaning into per-user permissions.
