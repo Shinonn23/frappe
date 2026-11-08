@@ -29,6 +29,7 @@
   "role_profile_name",
   "role_profiles",
   "roles_html",
+  "profile_permissions_html",
   "roles",
   "sb_allow_modules",
   "module_profile",
@@ -253,6 +254,12 @@
    "fieldtype": "HTML",
    "label": "Roles HTML",
    "read_only": 1
+  },
+  {
+   "fieldname": "profile_permissions_html",
+   "fieldtype": "HTML",
+   "label": "Profile Permissions",
+   "permlevel": 1
   },
   {
    "fieldname": "roles",

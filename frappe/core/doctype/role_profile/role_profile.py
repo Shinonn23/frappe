@@ -7,6 +7,29 @@ import frappe
 from frappe.model.document import Document
 
 
+@frappe.whitelist()
+def get_permission_catalog(profile=None):
+	"""Read the installed application's workflow authority catalog, if one is configured."""
+	providers = frappe.get_hooks("role_profile_permission_catalog")
+	if not providers:
+		return None
+	if profile:
+		frappe.get_doc("Role Profile", profile).check_permission("read")
+	elif not frappe.has_permission("Role Profile", "create"):
+		frappe.throw(frappe._("Not permitted"), frappe.PermissionError)
+	return frappe.get_attr(providers[-1])(profile=profile)
+
+
+@frappe.whitelist()
+def get_user_permissions(user):
+	"""Read saved authority through its owning application's permission checks."""
+	providers = frappe.get_hooks("user_role_profile_permissions")
+	if not providers:
+		return None
+	frappe.get_doc("User", user).check_permission("read")
+	return frappe.get_attr(providers[-1])(user=user)
+
+
 class RoleProfile(Document):
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.

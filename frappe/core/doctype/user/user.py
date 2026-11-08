@@ -927,6 +927,14 @@ def _get_timezones():
 
 
 @frappe.whitelist()
+def get_role_editor_data():
+	"""Workflow roles are managed outside the general role checkbox list."""
+	roles = get_all_roles()
+	managed = frappe.get_all("Role", filters={"is_workflow_permission": 1}, pluck="name")
+	return {"roles": [role for role in roles if role not in managed], "managed_roles": managed}
+
+
+@frappe.whitelist()
 def get_all_roles():
 	"""return all roles"""
 	active_domains = frappe.get_active_domains()

@@ -7,11 +7,26 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "tab_profile",
   "role_profile",
+  "tab_roles",
   "roles_html",
-  "roles"
+  "roles",
+  "additional_permissions_html",
+  "tab_approvals",
+  "workflow_permissions_html",
+  "tab_notifications",
+  "notifications_html",
+  "tab_visibility",
+  "tab_holders",
+  "holders_html"
  ],
  "fields": [
+  {
+   "fieldname": "tab_profile",
+   "fieldtype": "Tab Break",
+   "label": "Profile"
+  },
   {
    "fieldname": "role_profile",
    "fieldtype": "Data",
@@ -19,6 +34,11 @@
    "label": "Role Name",
    "reqd": 1,
    "unique": 1
+  },
+  {
+   "fieldname": "tab_roles",
+   "fieldtype": "Tab Break",
+   "label": "Roles"
   },
   {
    "fieldname": "roles_html",
@@ -35,6 +55,46 @@
    "permlevel": 1,
    "print_hide": 1,
    "read_only": 1
+  },
+  {
+   "fieldname": "additional_permissions_html",
+   "fieldtype": "HTML",
+   "label": "Additional Permissions"
+  },
+  {
+   "fieldname": "tab_approvals",
+   "fieldtype": "Tab Break",
+   "label": "Workflow Permissions"
+  },
+  {
+   "fieldname": "workflow_permissions_html",
+   "fieldtype": "HTML",
+   "label": "Workflow Permissions"
+  },
+  {
+   "fieldname": "tab_notifications",
+   "fieldtype": "Tab Break",
+   "label": "Notifications"
+  },
+  {
+   "fieldname": "notifications_html",
+   "fieldtype": "HTML",
+   "label": "Workflow Notifications"
+  },
+  {
+   "fieldname": "tab_visibility",
+   "fieldtype": "Tab Break",
+   "label": "Visibility"
+  },
+  {
+   "fieldname": "tab_holders",
+   "fieldtype": "Tab Break",
+   "label": "Holders"
+  },
+  {
+   "fieldname": "holders_html",
+   "fieldtype": "HTML",
+   "label": "Holders"
   }
  ],
  "grid_page_length": 50,

@@ -28,6 +28,8 @@ frappe.RoleEditor = class {
 		this.table_fieldname = table_fieldname;
 		this.role_fieldname = role_fieldname;
 		this.child_doctype = child_doctype || configured_child_doctype || "Has Role";
+		this.managed_roles = new Set();
+		this.roles_loaded = false;
 		let user_roles = this.get_selected_roles();
 		this.multicheck = frappe.ui.form.make_control({
 			parent: wrapper,
@@ -38,8 +40,10 @@ frappe.RoleEditor = class {
 				columns: "15rem",
 				get_data: () => {
 					return frappe
-						.xcall("frappe.core.doctype.user.user.get_all_roles")
-						.then((roles) => {
+						.xcall("frappe.core.doctype.user.user.get_role_editor_data")
+						.then(({ roles, managed_roles }) => {
+							this.managed_roles = new Set(managed_roles);
+							this.roles_loaded = true;
 							return roles.map((role) => {
 								return {
 									label: __(role),
@@ -169,10 +173,14 @@ frappe.RoleEditor = class {
 		this.multicheck.refresh_input();
 	}
 	set_roles_in_table() {
+		if (!this.roles_loaded) return;
 		let roles = this.get_role_rows();
 		let checked_options = this.multicheck.get_checked_options();
 		roles.forEach((role_doc) => {
-			if (!checked_options.includes(this.get_role_value(role_doc))) {
+			if (
+				!this.managed_roles.has(this.get_role_value(role_doc)) &&
+				!checked_options.includes(this.get_role_value(role_doc))
+			) {
 				frappe.model.clear_doc(role_doc.doctype, role_doc.name);
 			}
 		});

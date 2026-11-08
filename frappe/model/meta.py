@@ -603,7 +603,7 @@ class Meta(Document):
 				if field.fieldtype in ["Section Break", "Column Break"] and target_position in field_order:
 					# Find the next section or column break and set target_position to just one field before
 					for current_field in field_order[field_order.index(target_position) + 1 :]:
-						if self._fields[current_field].fieldtype == "Section Break" or (
+						if self._fields[current_field].fieldtype in ("Section Break", "Tab Break") or (
 							self._fields[current_field].fieldtype == self._fields[original_target].fieldtype
 						):
 							# Break out to add this just after the last field

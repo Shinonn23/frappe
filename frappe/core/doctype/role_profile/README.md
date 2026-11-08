@@ -1,0 +1,67 @@
+# Role Profile permissions
+
+The Frappe fork owns the Role Profile and User permission display. Company applications supply the workflow
+catalog and saved authority data through hooks; the form does not embed a company-specific permission list.
+
+## Forms and rendering
+
+`role_profile.json` defines the Profile, Roles, Workflow Permissions, Notifications, Visibility and Holders tabs,
+including their HTML fields. `../user/user.json` adds the saved User summary field `profile_permissions_html`.
+The form bundle, `frappe/public/js/form.bundle.js`, loads these renderers:
+
+| Source under `frappe/public/js/frappe/` | Responsibility |
+|---|---|
+| `profile_roles.js` | Functional Roles and Data Permissions in the native RoleEditor; additional catalog flags without a Role |
+| `role_profile_permissions.js` | Catalog-driven workflow permission dialogs, per-step scope and ceilings, and notification configuration |
+| `user_permission_view.js` | Read-only saved User roles, data permissions, merged workflow grants, notifications and source profiles |
+| `roles_editor.js` | Native role table lifecycle and preservation of assigned roles hidden from the general picker |
+
+Display tests live in `frappe/tests/js/profile_roles.test.mjs`, `role_profile_permissions.test.mjs` and
+`user_permission_view.test.mjs`. Company grant validation remains with the application that owns the grants.
+
+## Data providers
+
+The whitelisted endpoints in `role_profile.py` use the last configured provider for each hook:
+
+| Endpoint | Hook | Provider input |
+|---|---|---|
+| `get_permission_catalog` | `role_profile_permission_catalog` | `profile`: a saved Role Profile name, or null for a new profile |
+| `get_user_permissions` | `user_role_profile_permissions` | `user`: a saved User name |
+
+Without a provider the endpoints return null. Native endpoints check access to the named document (or permission
+to create a new Role Profile); providers retain their own authorization and data-access checks. A missing or denied
+User provider does not replace the native role editor with a partial summary.
+
+The Connect Diagnostics setup application registers its catalog in `workflows.profile_tools.editor_catalog` and
+its optional User summary in `workflows.user_permission_view.summary_for_editor`. These supply the live grantable Approval
+Step catalog, supported conditions, capability metadata and saved merged authority. The existing grant engine and
+Role Profile save validation continue enforcing scope, ceilings and authorization; this display adds no direct
+User workflow grants. Internal flags and grant/scope child rows remain hidden application-owned backing storage.
+The preview adds no data-migration patch.
+
+## Workflow roles
+
+`Role.is_workflow_permission` identifies workflow/approval-only roles. The native User endpoint
+`get_role_editor_data` returns general role choices separately from these managed roles. Both User and Role Profile
+checkboxes exclude them, and RoleEditor preserves any assigned hidden roles when saving other role selections.
+There is no Managed Workflow Roles section. Select workflow authority in Workflow Permissions instead.
+
+The company application classifies its workflow roles during its schema setup; the framework consumes the Role
+metadata rather than hardcoding company role names. This display filtering does not remove a role assignment or
+replace server authorization.
+
+## Usage
+
+Choose ordinary roles and data permissions in Roles. In Workflow Permissions, use Add Permission to select a catalog
+step, then set its Company, scope source, fixed values and supported amount, percent or grade ceilings. Edit changes
+an existing row. Notifications changes Ask/Stand-in and channel for the same grant; hand-off assignments remain
+separate. A notification selection does not grant additional approval authority.
+
+In the current company provider, blank Company means all companies; blank or zero numeric ceilings mean Unlimited,
+so a finite zero ceiling cannot be represented. My Department resolves membership, while Departments I head resolves
+head seats. The User summary shows saved authority and current department roots where available; save User changes
+to refresh it. Users with profiles see the summary instead of the disabled native role checkbox list, while users
+without profiles retain direct-role editing. The summary is not a document-specific authorization verdict.
+
+Workflow Settings remains global routing and validation configuration. The preview does not remove those settings
+or change their meaning into per-user permissions.
