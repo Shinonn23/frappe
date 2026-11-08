@@ -1,8 +1,7 @@
-// Keep Frappe's RoleEditor lifecycle; map its capability selections to the server's flags.
+// Map the Vue role selections to the native role table and the provider's backing flags.
 frappe.provide("frappe.profile_roles");
 (() => {
 	const api = frappe.profile_roles;
-	const escape = (value) => frappe.utils.escape_html(String(value ?? ""));
 	function options(doc, catalog) {
 		const selected = new Set((doc.roles || []).map((row) => row.role));
 		const flags = new Map(
@@ -30,117 +29,94 @@ frappe.provide("frappe.profile_roles");
 				.map((flag) => frm.set_value(flag.fieldname, Number(selected.has(flag.role))))
 		);
 	}
-	function group_editor(editor) {
-		const control = editor.multicheck;
-		const area = control.$checkbox_area;
-		for (const title of ["Functional Roles", "Data Permissions"]) {
-			const choices = control.options.filter((option) => option.group === title);
-			if (!choices.length) continue;
-			const section = $("<section class='mb-4'>").appendTo(area);
-			$("<h5>").text(__(title)).appendTo(section);
-
-			const grid = $("<div>")
-				.css({
-					display: "grid",
-					"grid-template-columns": "repeat(auto-fit, minmax(min(100%, 230px), 1fr))",
-					gap: "4px 16px",
-				})
-				.appendTo(section);
-			for (const option of choices) {
-				option.$checkbox.appendTo(grid);
-			}
-		}
-		area.css({ display: "block", columns: "auto" });
-		control.$select_buttons.hide();
-	}
-	function additional(frm, catalog) {
-		const field = frm.fields_dict.additional_permissions_html;
-		if (!field) return;
-		const flags = (catalog.flags || []).filter((flag) => !flag.role);
-		const writable = frappe.profile_permissions.writable(frm);
-		field.$wrapper.css("padding", "1em").html(
-			`<h5>${escape(__("HR and Additional Permissions"))}</h5>
-			<div style="display:grid;grid-template-columns:repeat(auto-fit,
-			minmax(min(100%, 230px),1fr));gap:8px 16px">` +
-				flags
-					.map(
-						(flag) =>
-							`<div class="checkbox"><label style="display:flex;align-items:center"><input type="checkbox" data-flag="${escape(
-								flag.fieldname
-							)}"
-			${frm.doc[flag.fieldname] ? " checked" : ""}${writable ? "" : " disabled"}>
-			<span class="label-area">${escape(__(flag.label))}</span></label></div>`
-					)
-					.join("") +
-				"</div>"
+	async function set_role(frm, role, checked) {
+		const catalog = frm.__permission_catalog;
+		if (!catalog || !frappe.profile_permissions.writable(frm)) return false;
+		const choices = options(frm.doc, catalog);
+		const choice = choices.find((item) => item.value === role);
+		if (!choice) return false;
+		choice.checked = Boolean(checked);
+		const selected = new Set(choices.filter((item) => item.checked).map((item) => item.value));
+		const editable = new Set(choices.map((item) => item.value));
+		frm.doc.roles = (frm.doc.roles || []).filter(
+			(row) => !editable.has(row.role) || selected.has(row.role)
 		);
-		field.$wrapper
-			.off("change.profile_roles")
-			.on("change.profile_roles", "input[data-flag]", (event) => {
-				if (!frappe.profile_permissions.writable(frm)) return;
-				const name = event.currentTarget.dataset.flag;
-				if (flags.some((flag) => flag.fieldname === name)) {
-					frm.set_value(name, Number(event.currentTarget.checked));
-				}
-			});
+		for (const role of selected) {
+			if (!frm.doc.roles.some((row) => row.role === role)) frm.add_child("roles", { role });
+		}
+		frm.doc.roles.forEach((row, index) => {
+			row.idx = index + 1;
+		});
+		frm.refresh_field("roles");
+		frm.dirty();
+		await sync_flags(frm, catalog);
+		render(frm);
+		return true;
+	}
+	async function set_flag(frm, name, checked) {
+		const catalog = frm.__permission_catalog;
+		if (!catalog || !frappe.profile_permissions.writable(frm)) return false;
+		if (!catalog.flags?.some((flag) => !flag.role && flag.fieldname === name)) return false;
+		await frm.set_value(name, Number(Boolean(checked)));
+		render(frm);
+		return true;
+	}
+	function render(frm) {
+		if (!frm.__permission_catalog || !frappe.permission_ui) return;
+		frappe.permission_ui.mount(frm.fields_dict.roles_html.$wrapper, "roles", {
+			frm,
+			catalog: frm.__permission_catalog,
+		});
+		frm.toggle_display("additional_permissions_html", false);
 	}
 	async function refresh(frm) {
+		const wrapper = frm.fields_dict.roles_html?.$wrapper;
+		if (!wrapper) return;
+		frm.__permission_ui_hidden = false;
+		const doc = frm.doc;
+		const generation = (frm.__profile_roles_generation || 0) + 1;
+		frm.__profile_roles_generation = generation;
+		const current = () =>
+			!frm.__permission_ui_hidden &&
+			frm.doc === doc &&
+			generation === frm.__profile_roles_generation;
 		try {
+			if (frm.__permission_catalog_doc !== doc) {
+				delete frm.__permission_catalog_promise;
+				delete frm.__permission_catalog;
+				frappe.permission_ui?.unmount(wrapper);
+				wrapper.empty().text(__("Loading permission choices..."));
+				frm.__permission_catalog_doc = doc;
+			}
 			frm.__permission_catalog_promise ||= frappe.xcall(
 				"frappe.core.doctype.role_profile.role_profile.get_permission_catalog",
-				{ profile: frm.is_new() ? null : frm.doc.name }
+				{ profile: frm.is_new() ? null : doc.name }
 			);
 			const catalog = await frm.__permission_catalog_promise;
-			if (!catalog) return;
+			if (!current()) return;
+			if (!catalog) {
+				if (!frm.roles_editor)
+					frm.roles_editor = new frappe.RoleEditor(
+						wrapper,
+						frm,
+						!frappe.profile_permissions.writable(frm)
+					);
+				frm.roles_editor.show();
+				return;
+			}
+			await frappe.permission_ui_loader.ensure();
+			if (!current()) return;
 			frm.__permission_catalog = catalog;
-			if (!frm.roles_editor && frm.fields_dict.roles_html) {
-				frm.roles_editor = new frappe.RoleEditor(
-					frm.fields_dict.roles_html.$wrapper,
-					frm,
-					!frappe.profile_permissions.writable(frm)
-				);
-			}
-			const editor = frm.roles_editor;
-			if (editor) {
-				editor.managed_roles = new Set(catalog.managed_roles || []);
-				editor.roles_loaded = true;
-				const control = editor.multicheck;
-				editor.disable = !frappe.profile_permissions.writable(frm);
-				control.df.get_data = () => options(frm.doc, catalog);
-				if (!editor.__profile_grouped) {
-					const make = control.make_checkboxes.bind(control);
-					control.make_checkboxes = () => {
-						// Native role requests may finish after the catalog request.
-						control.options = options(frm.doc, frm.__permission_catalog);
-						make();
-						group_editor(editor);
-					};
-					const change = control.df.on_change;
-					control.df.on_change = () => {
-						change();
-						sync_flags(frm, frm.__permission_catalog);
-					};
-					editor.__profile_grouped = true;
-				}
-				control.set_options();
-			}
-			additional(frm, catalog);
+			// An older native checkbox instance must never overwrite the Vue selections at save.
+			delete frm.roles_editor;
+			render(frm);
 		} catch (error) {
+			if (!current()) return;
 			delete frm.__permission_catalog_promise;
-			frm.fields_dict.additional_permissions_html?.$wrapper.html(
-				`<p class="text-danger">${escape(__("Unable to load permission choices."))}</p>`
-			);
+			frappe.permission_ui?.unmount(wrapper);
+			wrapper.text(__("Unable to load permission choices. Refresh the form to retry."));
 			console.error("Role permission catalog", error);
 		}
 	}
-	Object.assign(api, { options, sync_flags });
-	frappe.ui.form.on("Role Profile", {
-		refresh,
-		async validate(frm) {
-			if (frm.roles_editor && frm.__permission_catalog) {
-				frm.roles_editor.set_roles_in_table();
-				await sync_flags(frm, frm.__permission_catalog);
-			}
-		},
-	});
+	Object.assign(api, { options, sync_flags, set_role, set_flag, render, refresh });
 })();

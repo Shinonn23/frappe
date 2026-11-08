@@ -1,17 +1,6 @@
-// A saved, read-only view of User authority using the native Desk form controls.
+// A saved, read-only view; the User form remains the owner of role assignments.
 frappe.provide("frappe.user_permission_view");
 (() => {
-	const escape = (value) => frappe.utils.escape_html(String(value ?? ""));
-	const sources = (items) => (items || []).join(", ") || __("Direct role");
-	const field = (fieldname, label, columns = 0, fieldtype = "Data") => ({
-		fieldname,
-		label: __(label),
-		fieldtype,
-		read_only: 1,
-		in_list_view: columns ? 1 : 0,
-		columns,
-		formatter: escape,
-	});
 	function scope(row, details = false) {
 		const parts = [row.company || __("All companies")];
 		if (row.scope_policy) {
@@ -68,163 +57,99 @@ frappe.provide("frappe.user_permission_view");
 		}
 		return [...grouped.values()];
 	}
-	function table(fields, name, label, rows, columns, collapsed = false, description = "") {
-		fields.push({
-			fieldname: `${name}_section`,
-			fieldtype: "Section Break",
-			label: `${__(label)} (${rows.length})`,
-			collapsible: 1,
-			description: __(description),
-		});
-		if (rows.length) {
-			fields.push({
-				fieldname: name,
-				fieldtype: "Table",
-				label: "",
-				read_only: 1,
-				cannot_add_rows: 1,
-				cannot_delete_rows: 1,
-				on_setup(grid) {
-					// Standalone grids need static rows because they have no form permissions.
-					grid.static_rows = true;
-				},
-				fields: columns,
-				data: rows.map((row, index) => ({
-					...row,
-					idx: index + 1,
-					name: `${name}-${index}`,
-				})),
-			});
-		} else {
-			fields.push({ ...field(`${name}_empty`, "Status"), default: __("No permissions") });
-		}
-		return collapsed ? `${name}_section` : null;
-	}
-	function mount(wrapper, fields) {
-		wrapper.empty();
-		const group = new frappe.ui.FieldGroup({ parent: wrapper, fields, doc: {} });
-		group.make();
-		return group;
-	}
-	function status(wrapper, message) {
-		return mount(wrapper, [
-			{
-				...field("permission_status", "Permission Summary", 0, "Small Text"),
-				default: message,
-			},
-		]);
-	}
-	function render(data, wrapper, { direct_roles = false } = {}) {
+	function sections(data, { direct_roles = false } = {}) {
 		const managed = new Set(
 			(data.managed_roles || []).map((role) => (typeof role === "string" ? role : role.role))
 		);
 		const implicit = new Set(data.implicit_roles || []);
 		const roles = (data.roles || []).filter((row) => !managed.has(row.role));
-		const fields = [
+		const item = (row) => ({
+			permission: row.label || row.state || row.step,
+			state: row.state,
+			description: row.description,
+			document_type: row.reference_doctype,
+			flow: row.flow,
+			permission_id: row.step,
+			scope_summary: scope(row),
+			conditions: scope(row, true),
+			ceilings: limits(row),
+			notification: [row.ask_mode, row.channel].filter(Boolean).join(" · "),
+			sources: [...(row.sources || [])],
+		});
+		return [
+			...(!direct_roles
+				? [
+						{
+							name: "functional_roles",
+							label: __("Functional Roles"),
+							rows: roles
+								.filter((row) => !implicit.has(row.role))
+								.map((row) => ({
+									permission: row.role,
+									sources: [...(row.sources || [])],
+								})),
+						},
+				  ]
+				: []),
 			{
-				...field("permission_status", "Permission Summary", 0, "Small Text"),
-				default: data.administrator
-					? __(
-							"Administrator has implicit system access. Saved grants do not limit Administrator."
-					  )
-					: __("Saved permissions. Edit workflow authority in its source Role Profile."),
-				description: __("Open a row to inspect its conditions and source profiles."),
+				name: "data_permissions",
+				label: __("Data Permissions"),
+				rows: (data.capabilities || []).map((row) => ({
+					permission: row.label,
+					status: row.status,
+					sources: [...(row.sources || [])],
+				})),
+			},
+			{
+				name: "workflow_permissions",
+				label: __("Workflow Permissions"),
+				rows: (data.grants || []).map(item),
+			},
+			{
+				name: "handoff_assignments",
+				label: __("Handoff Assignments"),
+				rows: handoffs(data.handoffs).map((row) => ({
+					...item(row),
+					permission: row.handoff_rule || row.step,
+				})),
+			},
+			{
+				name: "system_roles",
+				label: __("System Roles"),
+				collapsed: true,
+				description: __("Automatically supplied by Frappe."),
+				rows: roles
+					.filter((row) => implicit.has(row.role))
+					.map((row) => ({ permission: row.role, sources: [] })),
 			},
 		];
-		if (!direct_roles) {
-			table(
-				fields,
-				"functional_roles",
-				"Functional Roles",
-				roles
-					.filter((row) => !implicit.has(row.role))
-					.map((row) => ({ role: row.role, sources: sources(row.sources) })),
-				[field("role", "Role", 4), field("sources", "Source Profiles", 6, "Small Text")]
-			);
-		}
-		table(
-			fields,
-			"data_permissions",
-			"Data Permissions",
-			(data.capabilities || []).map((row) => ({
-				permission: row.label,
-				status: row.status,
-				sources: sources(row.sources),
-			})),
-			[
-				field("permission", "Permission", 4),
-				field("status", "Status", 3),
-				field("sources", "Source Profiles", 3, "Small Text"),
-			]
-		);
-		table(
-			fields,
-			"workflow_permissions",
-			"Workflow Permissions",
-			(data.grants || []).map((row) => ({
-				document_type: row.reference_doctype,
-				permission: row.state || row.step,
-				scope_summary: scope(row),
-				notification: [row.ask_mode, row.channel].filter(Boolean).join(" · "),
-				permission_id: row.step,
-				flow: row.flow,
-				conditions: scope(row, true),
-				ceilings: limits(row),
-				sources: sources(row.sources),
-			})),
-			[
-				field("document_type", "Document Type", 3),
-				field("permission", "Permission", 3),
-				field("scope_summary", "Scope", 2),
-				field("notification", "Notification", 2),
-				field("permission_id", "Permission ID"),
-				field("flow", "Flow"),
-				field("conditions", "Conditions", 0, "Small Text"),
-				field("ceilings", "Limits", 0, "Small Text"),
-				field("sources", "Source Profiles", 0, "Small Text"),
-			]
-		);
-		table(
-			fields,
-			"handoff_assignments",
-			"Handoff Assignments",
-			handoffs(data.handoffs).map((row) => ({
-				document_type: row.reference_doctype,
-				permission: row.handoff_rule || row.step,
-				notification: [row.ask_mode, row.channel].filter(Boolean).join(" · "),
-				sources: sources(row.sources),
-				permission_id: row.step,
-				conditions: scope(row, true),
-			})),
-			[
-				field("document_type", "Document Type", 3),
-				field("permission", "Permission / Rule", 3),
-				field("notification", "Routing", 2),
-				field("sources", "Source Profiles", 2, "Small Text"),
-				field("permission_id", "Permission ID"),
-				field("conditions", "Conditions", 0, "Small Text"),
-			]
-		);
-		const system_section = table(
-			fields,
-			"system_roles",
-			"System Roles",
-			roles.filter((row) => implicit.has(row.role)).map((row) => ({ role: row.role })),
-			[field("role", "Role", 10)],
-			true,
-			"Automatically supplied by Frappe."
-		);
-		const group = mount(wrapper, fields);
-		group.sections?.find((section) => section.df.fieldname === system_section)?.collapse(true);
-		return group;
+	}
+	function clear(wrapper) {
+		frappe.permission_ui?.unmount(wrapper);
+		wrapper.empty();
+	}
+	function status(wrapper, message) {
+		clear(wrapper);
+		wrapper.text(message);
+		return null;
+	}
+	function render(data, wrapper, { direct_roles = false } = {}) {
+		return frappe.permission_ui.mount(wrapper, "user", { data, direct_roles });
 	}
 	async function refresh(frm) {
 		const wrapper = frm.fields_dict.profile_permissions_html?.$wrapper;
 		if (!wrapper) return;
+		frm.__permission_ui_hidden = false;
 		const generation = (frm.__profile_permissions_generation || 0) + 1;
 		frm.__profile_permissions_generation = generation;
+		const user = frm.doc.name;
+		const current = () =>
+			!frm.__permission_ui_hidden &&
+			generation === frm.__profile_permissions_generation &&
+			frm.doc.name === user &&
+			(!frm.get_perm || frm.get_perm(1, "read"));
 		if (frm.get_perm && !frm.get_perm(1, "read")) {
-			wrapper.empty();
+			clear(wrapper);
 			frm.toggle_display?.("profile_permissions_html", false);
 			return;
 		}
@@ -241,19 +166,19 @@ frappe.provide("frappe.user_permission_view");
 			return;
 		}
 		frm.__user_permission_group = status(wrapper, __("Loading saved permissions..."));
-		const user = frm.doc.name;
 		try {
 			const response = await frappe.call({
 				method: "frappe.core.doctype.role_profile.role_profile.get_user_permissions",
 				args: { user },
 			});
-			if (generation !== frm.__profile_permissions_generation || frm.doc.name !== user)
-				return;
+			if (!current()) return;
 			if (!response.message) {
-				wrapper.empty();
+				clear(wrapper);
 				frm.toggle_display?.("profile_permissions_html", false);
 				return;
 			}
+			await frappe.permission_ui_loader.ensure();
+			if (!current()) return;
 			if (frm.is_dirty()) {
 				frm.__user_permission_group = status(wrapper, __("Save to refresh permissions."));
 				return;
@@ -266,15 +191,14 @@ frappe.provide("frappe.user_permission_view");
 			});
 			frm.toggle_display?.("roles_html", !has_profiles);
 		} catch (error) {
-			if (generation !== frm.__profile_permissions_generation || frm.doc.name !== user)
-				return;
+			if (!current()) return;
 			frm.__user_permission_group = status(
 				wrapper,
 				__("Unable to load saved permissions. Check access and refresh.")
 			);
 		}
 	}
-	Object.assign(frappe.user_permission_view, { render, refresh });
+	Object.assign(frappe.user_permission_view, { sections, render, refresh });
 	frappe.ui.form.on("User", { refresh, role_profiles: refresh, role_profile_name: refresh });
 	frappe.ui.form.on("User Role Profile", {
 		role_profile: refresh,

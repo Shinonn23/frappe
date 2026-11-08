@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* The library lives inside Desk, which owns typography and the outer page. */
+:is(.frappe-permission-ui, #frappeui-popper-root, #headlessui-portal-root) {
+	font-family: inherit;
+	font-size: 14px;
+	line-height: 1.5;
+	color: var(--ink-gray-9);
+}
+
+/* Desk's label margin offsets the library's centered checkbox rows. */
+input[type="checkbox"] + label {
+	margin-top: 0;
+	margin-bottom: 0;
+}
+
+input[type="checkbox"] {
+	margin: 0;
+	flex-shrink: 0;
+}
+
+#headlessui-portal-root,
+#frappeui-popper-root {
+	/* Desk's body is flex; portals must not consume a column beside the form. */
+	position: fixed;
+	inset: 0;
+	pointer-events: none;
+}
+
+#headlessui-portal-root > *,
+#frappeui-popper-root > * {
+	pointer-events: auto;
+}
+
+#headlessui-portal-root {
+	z-index: 1100;
+}
+
+#frappeui-popper-root {
+	z-index: 1110;
+}

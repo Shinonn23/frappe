@@ -13,6 +13,7 @@ import "./frappe/form/templates/users_in_sidebar.html";
 import "./frappe/views/formview.js";
 import "./frappe/views/render_preview.js";
 import "./frappe/form/form.js";
+import "./frappe/permission_ui_loader.js";
 import "./frappe/role_profile_permissions.js";
 import "./frappe/profile_roles.js";
 import "./frappe/user_permission_view.js";

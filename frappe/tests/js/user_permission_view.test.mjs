@@ -7,55 +7,41 @@ const source = readFileSync(
   new URL("../../public/js/frappe/user_permission_view.js", import.meta.url),
   "utf8"
 );
-const escape = (value) =>
-  String(value ?? "").replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[
-        c
-      ])
-  );
 function wrapper() {
   return {
     current: null,
-    clears: 0,
+    message: "",
     empty() {
       this.current = null;
-      this.clears++;
+      this.message = "";
+      return this;
+    },
+    text(message) {
+      this.message = message;
       return this;
     },
   };
 }
-function load(call = async () => ({ message: {} })) {
-  class FieldGroup {
-    constructor(options) {
-      Object.assign(this, options);
-      this.parent.current = this;
-      this.fields_dict = {};
-      this.sections = [];
-    }
-    make() {
-      for (const df of this.fields) {
-        this.fields_dict[df.fieldname] = { df, value: df.default };
-        if (df.fieldtype === "Section Break") {
-          this.sections.push({
-            df,
-            collapse(hidden) {
-              this.collapsed = hidden;
-            },
-          });
-        }
-      }
-    }
-  }
+function load(call = async () => ({ message: {} }), ensure = async () => {}) {
   const context = {
     __: (value) => value,
     frappe: {
       provide() {},
       user_permission_view: {},
       call,
-      utils: { escape_html: escape },
-      ui: { FieldGroup, form: { on() {} } },
+      permission_ui_loader: { ensure },
+      permission_ui: {
+        mount(target, view, props) {
+          assert.equal(view, "user");
+          target.message = "";
+          target.current = { view, props };
+          return target.current;
+        },
+        unmount(target) {
+          target.current = null;
+        },
+      },
+      ui: { form: { on() {} } },
     },
   };
   vm.runInContext(source, vm.createContext(context));
@@ -72,17 +58,17 @@ function form(name = "holder") {
     },
   };
 }
-const table = (group, name) => group.fields_dict[name]?.df;
+const rows = (sections, name) =>
+  sections.find((section) => section.name === name)?.rows;
 const status = (frm) =>
-  frm.fields_dict.profile_permissions_html.$wrapper.current?.fields_dict
-    .permission_status.value;
-function render(data, options) {
-  return load().render(data, wrapper(), options);
-}
+  frm.fields_dict.profile_permissions_html.$wrapper.message;
+const renderedRows = (frm, name) => {
+  const props = frm.__user_permission_group.props;
+  return rows(load().sections(props.data, props), name);
+};
 
-test("uses native readonly grids and one workflow row for conditions and notifications", () => {
+test("workflow conditions and notifications share one readonly item without mutating saved data", () => {
   const data = {
-    profiles: [{ name: "Position <A>" }],
     roles: [{ role: "Sales User", sources: ["Position <A>"] }],
     grants: [
       {
@@ -103,47 +89,27 @@ test("uses native readonly grids and one workflow row for conditions and notific
     ],
   };
   const before = JSON.stringify(data);
-  const group = render(data);
-  const grid = table(group, "workflow_permissions");
-  assert.equal(grid.fieldtype, "Table");
-  assert.equal(grid.data.length, 1);
-  const row = grid.data[0];
+  const sections = load().sections(data);
+  const workflow = rows(sections, "workflow_permissions");
+  assert.equal(workflow.length, 1);
+  const row = workflow[0];
   assert.equal(row.document_type, "Payroll Entry");
   assert.equal(row.permission, "Review");
   assert.equal(row.notification, "Stand-in · Both");
   assert.match(row.ceilings, /Amount: 10000.*Percent: Unlimited/);
   assert.match(row.conditions, /Department: <script>/);
-  assert.equal(row.sources, "Position <A>");
-  assert.ok(!group.fields.some((df) => /notifications/i.test(df.fieldname)));
-  for (const df of group.fields.filter((df) => df.fieldtype === "Table")) {
-    assert.equal(df.read_only, 1);
-    assert.equal(df.cannot_add_rows, 1);
-    assert.equal(df.cannot_delete_rows, 1);
-    assert.equal(
-      df.label,
-      "",
-      "the section already supplies the table heading"
-    );
-    const nativeGrid = {};
-    df.on_setup(nativeGrid);
-    assert.equal(
-      nativeGrid.static_rows,
-      true,
-      "standalone grids cannot reorder rows"
-    );
-    for (const column of df.fields) {
-      assert.equal(column.read_only, 1);
-      assert.equal(column.formatter("<script>"), "&lt;script&gt;");
-    }
-  }
-  assert.equal(JSON.stringify(data), before, "viewing never mutates authority");
-  assert.deepEqual(Object.keys(group.doc), []);
-  assert.ok(!group.fields.some((df) => df.fieldtype === "HTML"));
-  assert.doesNotMatch(source, /<table|style=|\.html\(/);
+  assert.deepEqual([...row.sources], ["Position <A>"]);
+  row.sources.push("Another profile");
+  assert.ok(!sections.some((section) => /notifications/i.test(section.name)));
+  assert.equal(
+    JSON.stringify(data),
+    before,
+    "view data is independent of saved authority"
+  );
 });
 
 test("separates automatic system roles and hides metadata-managed workflow roles", () => {
-  const group = render({
+  const sections = load().sections({
     roles: [
       { role: "Sales User" },
       { role: "All" },
@@ -155,17 +121,15 @@ test("separates automatic system roles and hides metadata-managed workflow roles
     implicit_roles: ["All", "Desk User"],
   });
   assert.deepEqual(
-    [...table(group, "functional_roles").data].map((row) => row.role),
+    [...rows(sections, "functional_roles")].map((row) => row.permission),
     ["Sales User"]
   );
   assert.deepEqual(
-    [...table(group, "system_roles").data].map((row) => row.role),
+    [...rows(sections, "system_roles")].map((row) => row.permission),
     ["All", "Desk User"]
   );
   assert.equal(
-    group.sections.find(
-      (section) => section.df.fieldname === "system_roles_section"
-    ).collapsed,
+    sections.find((section) => section.name === "system_roles").collapsed,
     true
   );
 });
@@ -192,18 +156,18 @@ test("exact duplicate handoffs combine sources without broadening other assignme
     ],
   };
   const before = JSON.stringify(data);
-  const rows = table(render(data), "handoff_assignments").data;
-  assert.equal(rows.length, 5);
-  assert.equal(rows[0].sources, "First profile, Second profile");
-  assert.ok(rows.some((row) => row.notification.includes("Stand-in")));
-  assert.ok(rows.some((row) => row.conditions.includes("Company B")));
-  assert.ok(rows.some((row) => row.conditions.includes("Warehouse: Second")));
-  assert.ok(rows.some((row) => row.permission === "Rule B"));
+  const result = rows(load().sections(data), "handoff_assignments");
+  assert.equal(result.length, 5);
+  assert.deepEqual([...result[0].sources], ["First profile", "Second profile"]);
+  assert.ok(result.some((row) => row.notification.includes("Stand-in")));
+  assert.ok(result.some((row) => row.conditions.includes("Company B")));
+  assert.ok(result.some((row) => row.conditions.includes("Warehouse: Second")));
+  assert.ok(result.some((row) => row.permission === "Rule B"));
   assert.equal(JSON.stringify(data), before);
 });
 
-test("relation-owned scopes show the actual policy and omit ineffective stored scopes", () => {
-  const group = render({
+test("relation-owned scopes show actual policy instead of ineffective stored values", () => {
+  const sections = load().sections({
     grants: [
       {
         step: "generic",
@@ -216,8 +180,7 @@ test("relation-owned scopes show the actual policy and omit ineffective stored s
       },
     ],
   });
-  const grid = table(group, "workflow_permissions");
-  const row = grid.data[0];
+  const row = rows(sections, "workflow_permissions")[0];
   assert.match(
     row.conditions,
     /Manager assigned on Unit.*Named <manager> decides/
@@ -227,17 +190,10 @@ test("relation-owned scopes show the actual policy and omit ineffective stored s
     /Obsolete root|Fixed values|Selected values/
   );
   assert.doesNotMatch(row.scope_summary, /Named <manager>/);
-  assert.match(
-    grid.fields
-      .find((field) => field.fieldname === "conditions")
-      .formatter(row.conditions),
-    /Named &lt;manager&gt;/
-  );
 });
 
-test("data permission status, sources and Administrator exception remain explicit", () => {
-  const group = render({
-    administrator: true,
+test("data permission status and source profiles remain explicit", () => {
+  const sections = load().sections({
     capabilities: [
       {
         label: "Sees Buying Prices",
@@ -246,24 +202,27 @@ test("data permission status, sources and Administrator exception remain explici
       },
     ],
   });
-  assert.match(
-    group.fields_dict.permission_status.value,
-    /do not limit Administrator/
-  );
-  const row = table(group, "data_permissions").data[0];
+  const row = rows(sections, "data_permissions")[0];
   assert.equal(row.permission, "Sees Buying Prices");
   assert.equal(row.status, "Granted role");
-  assert.equal(row.sources, "Data");
+  assert.deepEqual([...row.sources], ["Data"]);
 });
 
-test("unsaved changes use a native save notice and make no request", async () => {
+test("new and dirty Users show a save notice without requesting or loading the UI", async () => {
   let calls = 0;
-  const api = load(async () => calls++);
+  const api = load(
+    async () => calls++,
+    async () => calls++
+  );
   const frm = form();
   frm.dirty = true;
   await api.refresh(frm);
   assert.equal(calls, 0);
   assert.match(status(frm), /Save to refresh permissions/);
+  frm.dirty = false;
+  frm.is_new = () => true;
+  await api.refresh(frm);
+  assert.equal(calls, 0);
 });
 
 test("a stale response cannot replace the summary for a newer User", async () => {
@@ -277,42 +236,65 @@ test("a stale response cannot replace the summary for a newer User", async () =>
   await second;
   pending[0]({ message: { roles: [{ role: "Old role" }] } });
   await first;
-  const rows = table(frm.__user_permission_group, "functional_roles").data;
   assert.deepEqual(
-    [...rows].map((row) => row.role),
+    [...renderedRows(frm, "functional_roles")].map((row) => row.permission),
     ["New role"]
   );
 });
 
-test("changes during a request show save notice instead of stale permissions", async () => {
+test("changes while the library loads show a save notice instead of stale permissions", async () => {
   let resolve;
-  const api = load(() => new Promise((done) => (resolve = done)));
+  const api = load(
+    async () => ({ message: { roles: [{ role: "Saved role" }] } }),
+    () => new Promise((done) => (resolve = done))
+  );
   const frm = form();
   const request = api.refresh(frm);
+  await new Promise(setImmediate);
   frm.dirty = true;
-  resolve({ message: { roles: [{ role: "Saved role" }] } });
+  resolve();
   await request;
   assert.match(status(frm), /Save to refresh permissions/);
-  assert.equal(
-    table(frm.__user_permission_group, "functional_roles"),
-    undefined
-  );
+  assert.equal(frm.__user_permission_group, null);
 });
 
-test("request failure leaves native roles visible and a readable native status", async () => {
+test("navigation while the library loads cannot mount the previous User", async () => {
+  let resolve;
+  const api = load(
+    async () => ({ message: { roles: [{ role: "Saved role" }] } }),
+    () => new Promise((done) => (resolve = done))
+  );
   const frm = form();
-  const toggles = [];
-  frm.toggle_display = (field, visible) => toggles.push([field, visible]);
-  await load(async () => {
-    throw new Error("denied");
-  }).refresh(frm);
-  assert.match(status(frm), /Unable to load saved permissions/);
-  assert.ok(
-    !toggles.some(([field, visible]) => field === "roles_html" && !visible)
-  );
+  const request = api.refresh(frm);
+  await new Promise(setImmediate);
+  frm.doc.name = "another";
+  resolve();
+  await request;
+  assert.equal(frm.fields_dict.profile_permissions_html.$wrapper.current, null);
 });
 
-test("profile users get native summary while direct users retain their editable role editor", async () => {
+test("request or library failure leaves native roles available and readable status", async () => {
+  for (const failure of ["request", "library"]) {
+    const frm = form();
+    const toggles = [];
+    frm.toggle_display = (field, visible) => toggles.push([field, visible]);
+    await load(
+      async () => {
+        if (failure === "request") throw new Error("denied");
+        return { message: {} };
+      },
+      async () => {
+        if (failure === "library") throw new Error("load failed");
+      }
+    ).refresh(frm);
+    assert.match(status(frm), /Unable to load saved permissions/);
+    assert.ok(
+      !toggles.some(([field, visible]) => field === "roles_html" && !visible)
+    );
+  }
+});
+
+test("profile users get Vue summary while direct users retain editable native roles", async () => {
   const frm = form();
   const toggles = [];
   frm.toggle_display = (field, visible) => toggles.push([field, visible]);
@@ -321,35 +303,33 @@ test("profile users get native summary while direct users retain their editable 
   }));
   await api.refresh(frm);
   assert.deepEqual(toggles.at(-1), ["roles_html", false]);
-  assert.ok(table(frm.__user_permission_group, "functional_roles"));
+  assert.equal(frm.__user_permission_group.view, "user");
+  assert.ok(renderedRows(frm, "functional_roles"));
   frm.doc.role_profiles = [];
   await api.refresh(frm);
   assert.deepEqual(toggles.at(-1), ["roles_html", true]);
-  assert.equal(
-    table(frm.__user_permission_group, "functional_roles"),
-    undefined
-  );
+  assert.equal(renderedRows(frm, "functional_roles"), undefined);
 });
 
-test("an absent provider clears the mount and leaves native roles available", async () => {
+test("an absent provider clears the mount without loading the library", async () => {
   const frm = form();
   const toggles = [];
   frm.toggle_display = (field, visible) => toggles.push([field, visible]);
-  await load(async (request) => {
-    assert.equal(
-      request.method,
-      "frappe.core.doctype.role_profile.role_profile.get_user_permissions"
-    );
-    return { message: null };
-  }).refresh(frm);
+  await load(
+    async (request) => {
+      assert.equal(
+        request.method,
+        "frappe.core.doctype.role_profile.role_profile.get_user_permissions"
+      );
+      return { message: null };
+    },
+    async () => assert.fail("absent provider must not load the library")
+  ).refresh(frm);
   assert.equal(frm.fields_dict.profile_permissions_html.$wrapper.current, null);
   assert.deepEqual(toggles.at(-1), ["profile_permissions_html", false]);
-  assert.ok(
-    !toggles.some(([field, visible]) => field === "roles_html" && !visible)
-  );
 });
 
-test("level-one read permission is checked before fetching and invalidates pending responses", async () => {
+test("level-one read permission is checked before fetch and invalidates pending responses", async () => {
   const pending = [];
   const api = load(() => new Promise((resolve) => pending.push(resolve)));
   const frm = form();
@@ -361,4 +341,100 @@ test("level-one read permission is checked before fetching and invalidates pendi
   await request;
   assert.equal(pending.length, 1);
   assert.equal(frm.fields_dict.profile_permissions_html.$wrapper.current, null);
+});
+
+test("Vue uses real frappe-ui controls and text interpolation for untrusted values", () => {
+  const component = readFileSync(
+    new URL(
+      "../../public/js/frappe/permission_ui/UserPermissions.vue",
+      import.meta.url
+    ),
+    "utf8"
+  );
+  assert.match(component, /frappe-ui\/src\/components\/Dialog.vue/);
+  assert.match(component, /frappe-ui\/src\/components\/FormControl.vue/);
+  assert.match(component, /\{\{ row\.permission \}\}/);
+  assert.match(component, /\{\{ value \}\}/);
+  assert.match(component, /frappe\.set_route\("Form", "Role Profile", name\)/);
+  assert.doesNotMatch(component, /v-html|innerHTML|\.html\(/);
+  assert.doesNotMatch(source, /FieldGroup|\.html\(/);
+});
+
+test("saved grant display metadata changes presentation while preserving raw state and ID", () => {
+  const grant = {
+    step: "generic_receipt",
+    state: "Pending Inspection",
+    label: "Accept / Reject Receipt",
+    description:
+      "Require submitted <Accepted> inspection only for inspection items.",
+    reference_doctype: "Receipt",
+    sources: ["Warehouse Duty"],
+  };
+  const data = {
+    grants: [grant, { step: "fallback", state: "Review" }, { step: "unknown" }],
+  };
+  const before = JSON.stringify(data);
+  const result = rows(load().sections(data), "workflow_permissions");
+  assert.equal(result[0].permission, grant.label);
+  assert.equal(result[0].state, grant.state);
+  assert.equal(result[0].permission_id, grant.step);
+  assert.equal(result[0].description, grant.description);
+  assert.equal(result[1].permission, "Review");
+  assert.equal(result[2].permission, "unknown");
+  assert.equal(JSON.stringify(data), before);
+});
+
+test("User Vue searches display label and original state; description appears in cards and details as text", () => {
+  const component = readFileSync(
+    new URL(
+      "../../public/js/frappe/permission_ui/UserPermissions.vue",
+      import.meta.url
+    ),
+    "utf8"
+  );
+  const grant = {
+    step: "generic_receipt",
+    state: "Pending Inspection",
+    label: "Accept / Reject Receipt",
+    description: "Submitted <Accepted> inspection for required items.",
+  };
+  const props = { data: { grants: [grant] }, direct_roles: false };
+  const script = component
+    .split("<script setup>")[1]
+    .split("</script>")[0]
+    .replace(/^import .*;\n/gm, "");
+  const context = {
+    defineProps: () => props,
+    frappe: { user_permission_view: load() },
+    __: (value) => value,
+    computed: (getter) => ({
+      get value() {
+        return getter();
+      },
+    }),
+    ref: (value) => ({ value }),
+    watch() {},
+  };
+  vm.runInNewContext(
+    script +
+      "\nglobalThis.view = { query, visibleSections, showDetails, detailFields };",
+    context
+  );
+  for (const query of [grant.label, grant.state, grant.description]) {
+    context.view.query.value = query;
+    const filtered = context.view.visibleSections.value.find(
+      (section) => section.name === "workflow_permissions"
+    ).filtered;
+    assert.equal(filtered.length, 1);
+    context.view.showDetails(filtered[0]);
+  }
+  assert.equal(
+    context.view.detailFields.value.find(
+      ([label]) => label === "Description"
+    )[1],
+    grant.description
+  );
+  assert.match(component, /\{\{ row\.description \}\}/);
+  assert.match(component, /\{\{ value \}\}/);
+  assert.doesNotMatch(component, /v-html|innerHTML/);
 });

@@ -8,6 +8,7 @@ const cliui = require("cliui")();
 const chalk = require("chalk");
 const html_plugin = require("./frappe-html");
 const vue_style_plugin = require("./frappe-vue-style");
+const permission_ui_style = require("./permission-ui-style").plugin;
 const rtlcss = require("rtlcss");
 const postCssPlugin = require("@frappe/esbuild-plugin-postcss2").default;
 const ignore_assets = require("./ignore-assets");
@@ -291,7 +292,13 @@ function get_files_to_build(files) {
 }
 
 function build_files({ files, outdir }) {
-	let build_plugins = [vue(), html_plugin, vue_style_plugin, build_cleanup_plugin];
+	let build_plugins = [
+		permission_ui_style,
+		vue(),
+		html_plugin,
+		vue_style_plugin,
+		build_cleanup_plugin,
+	];
 	return esbuild.build(get_build_options(files, outdir, build_plugins));
 }
 
@@ -329,6 +336,7 @@ function get_build_options(files, outdir, plugins) {
 			"process.env.NODE_ENV": JSON.stringify(PRODUCTION ? "production" : "development"),
 			__VUE_OPTIONS_API__: JSON.stringify(true),
 			__VUE_PROD_DEVTOOLS__: JSON.stringify(false),
+			__VUE_PROD_HYDRATION_MISMATCH_DETAILS__: JSON.stringify(false),
 		},
 		plugins: plugins,
 		watch: get_watch_config(),

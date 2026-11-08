@@ -11,8 +11,8 @@ The form bundle, `frappe/public/js/form.bundle.js`, loads these renderers:
 
 | Source under `frappe/public/js/frappe/` | Responsibility |
 |---|---|
-| `profile_roles.js` | Functional Roles and Data Permissions in the native RoleEditor; additional catalog flags without a Role |
-| `role_profile_permissions.js` | Catalog-driven workflow permission dialogs, per-step scope and ceilings, and notification configuration |
+| `profile_roles.js` | Vue Functional Roles, Data Permissions and additional catalog flags; role/flag storage synchronization |
+| `role_profile_permissions.js` | Catalog-driven Vue workflow permission dialogs, per-step scope and ceilings, and notification configuration |
 | `user_permission_view.js` | Read-only saved User roles, data permissions, merged workflow grants, notifications and source profiles |
 | `roles_editor.js` | Native role table lifecycle and preservation of assigned roles hidden from the general picker |
 
@@ -57,6 +57,10 @@ step, then set its Company, scope source, fixed values and supported amount, per
 an existing row. Notifications changes Ask/Stand-in and channel for the same grant; hand-off assignments remain
 separate. A notification selection does not grant additional approval authority.
 
+Catalog steps may provide `label` and `description` for action-oriented permission names and prerequisite guidance.
+The editors and User summary prefer that label while preserving the raw workflow state and permanent step key.
+Descriptions render as plain text in cards and dialogs; older providers without display metadata retain the state label.
+
 Catalog steps with `scope_policy` show their assignment policy and `note` instead of editable scope controls.
 Company still applies. New grants use All for internal scope storage; editing an existing grant preserves its
 historical scope values. The same policy appears in the saved User summary.
@@ -67,11 +71,18 @@ head seats. The User summary shows saved authority and current department roots 
 to refresh it. Users with profiles see the summary instead of the disabled native role checkbox list, while users
 without profiles retain direct-role editing. The summary is not a document-specific authorization verdict.
 
-The User summary uses native `frappe.ui.FieldGroup` sections and read-only Table/Grid controls. Workflow conditions
-and notification routing share one row; opening the row shows full scope, ceilings and source profiles. Identical
-handoff configurations combine their source profiles without merging different conditions. Frappe supplies
-`implicit_roles` alongside provider data so automatic System Roles can appear in a separate collapsed section.
-These viewing controls use a separate document and static rows; inspecting permissions never changes the User.
+The embedded screens use the external `frappe-ui` Vue library, loaded lazily through
+`permission_ui_loader.js` and `permission_ui/permission_ui.bundle.js`. `ProfileRoles.vue` edits functional roles and
+capability flags; `WorkflowPermissions.vue` edits catalog grants, scopes, ceilings and notifications;
+`UserPermissions.vue` shows saved permissions with search, collapsible sections and a Details dialog. The Desk form
+continues to own Save, validation and document state. Read-only User viewing never changes the User document.
+Identical handoff configurations combine their sources without merging different conditions. Frappe supplies
+`implicit_roles` alongside provider data for a separate collapsed System Roles section.
+
+The framework pins `frappe-ui` 0.1.105 and Vue 3.5.12. `esbuild/permission-ui-style.js` builds the library's Tailwind
+styles only for this bundle, scoped to `.frappe-permission-ui` and the library's popover/dialog portals. Its base
+reset and typography do not affect the surrounding Desk. Run `bench build --app frappe` after source or dependency
+changes. Forms without an application catalog keep the native RoleEditor fallback.
 
 Workflow Settings remains global routing and validation configuration. The preview does not remove those settings
 or change their meaning into per-user permissions.
