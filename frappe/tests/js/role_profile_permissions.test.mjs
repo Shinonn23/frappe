@@ -439,3 +439,73 @@ test("provider metadata controls scope sources without frontend step-specific ru
     /comes from/
   );
 });
+
+test("relation-owned scope hides ineffective controls and preserves existing stored scope", async () => {
+  const { api, frm, dialogs } = load();
+  const assigned = {
+    ...step,
+    scope_policy: "Manager assigned on Unit",
+    note: "The named <manager> decides.",
+  };
+  frm.__permission_catalog.steps = [assigned];
+  api.apply(
+    frm,
+    null,
+    { ...values, max_grade: 0, ask_mode: "Ask", channel: "Both" },
+    assigned
+  );
+  const original = JSON.stringify(frm.doc);
+  const html = frm.fields_dict.workflow_permissions_html.$wrapper.value;
+  assert.match(html, /Manager assigned on Unit/);
+  assert.doesNotMatch(html, /Department: Laboratory/);
+  await frm.fields_dict.workflow_permissions_html.$wrapper.handlers[
+    "click.profile_permissions"
+  ]({
+    currentTarget: { dataset: { action: "edit", index: "0" } },
+  });
+  const dialog = dialogs[0];
+  for (const field of [
+    "scope_kind",
+    "scope_source",
+    "fixed_values",
+    "include_descendants",
+  ]) {
+    assert.equal(dialog.fields_dict[field].df.hidden, true);
+  }
+  assert.match(
+    dialog.fields_dict.details.$wrapper.value,
+    /named &lt;manager&gt;/
+  );
+  dialog.options.primary_action({
+    ...dialog.values,
+    scope_kind: "",
+    fixed_values: [],
+  });
+  assert.equal(JSON.stringify(frm.doc), original);
+  const ordinary = { ...step, step_id: "ordinary" };
+  frm.__permission_catalog.steps.push(ordinary);
+  await dialog.set_value("step", ordinary.step_id);
+  assert.equal(dialog.fields_dict.scope_kind.df.hidden, false);
+  assert.equal(dialog.fields_dict.scope_source.df.hidden, false);
+});
+
+test("new relation-owned permission defaults to All while keeping company editable", async () => {
+  const { api, frm, dialogs } = load();
+  const assigned = { ...step, scope_policy: "Manager assigned on Unit" };
+  frm.__permission_catalog.steps = [assigned];
+  api.render(frm);
+  await frm.fields_dict.workflow_permissions_html.$wrapper.handlers[
+    "click.profile_permissions"
+  ]({
+    currentTarget: { dataset: { action: "add" } },
+  });
+  const dialog = dialogs[0];
+  await dialog.set_value("step", assigned.step_id);
+  assert.equal(dialog.get_value("scope_kind"), "All");
+  assert.equal(dialog.get_value("scope_source"), "All");
+  assert.ok(!dialog.fields_dict.company.df.hidden);
+  await dialog.set_value("company", "Company B");
+  dialog.options.primary_action(dialog.values);
+  assert.equal(frm.doc.approval_grants[0].company, "Company B");
+  assert.equal(frm.doc.approval_grants[0].scope_kind, "All");
+});

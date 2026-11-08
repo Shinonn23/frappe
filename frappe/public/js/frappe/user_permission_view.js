@@ -17,6 +17,12 @@
 	const step_label = (row) =>
 		[row.reference_doctype, row.state, row.step].filter(Boolean).map(escape).join(" / ");
 	const scope = (row) => {
+		if (row.scope_policy) {
+			return [row.company || "All companies", row.scope_policy, row.note]
+				.filter(Boolean)
+				.map(escape)
+				.join("<br>");
+		}
 		const parts = [row.company || "All companies", row.scope_kind, row.scope_source];
 		for (const [kind, value] of row.scope_values || []) parts.push(`${kind}: ${value}`);
 		if (row.scope_kind && row.scope_kind !== "All") {

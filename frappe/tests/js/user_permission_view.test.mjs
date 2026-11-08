@@ -204,3 +204,22 @@ test("denied provider never hides the native role editor", async () => {
     !toggles.some(([field, visible]) => field === "roles_html" && !visible)
   );
 });
+
+test("relation-owned authority shows its actual assignment policy instead of inactive stored scopes", () => {
+  const html = load().render({
+    grants: [
+      {
+        step: "generic",
+        company: "Company A",
+        scope_kind: "Department",
+        scope_source: "Fixed values",
+        scope_values: [["Department", "Obsolete root"]],
+        scope_policy: "Manager assigned on Unit",
+        note: "Named <manager> decides.",
+      },
+    ],
+  });
+  assert.match(html, /Manager assigned on Unit/);
+  assert.match(html, /Named &lt;manager&gt; decides/);
+  assert.doesNotMatch(html, /Obsolete root|Fixed values|Selected values only/);
+});

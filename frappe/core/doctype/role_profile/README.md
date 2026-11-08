@@ -57,6 +57,10 @@ step, then set its Company, scope source, fixed values and supported amount, per
 an existing row. Notifications changes Ask/Stand-in and channel for the same grant; hand-off assignments remain
 separate. A notification selection does not grant additional approval authority.
 
+Catalog steps with `scope_policy` show their assignment policy and `note` instead of editable scope controls.
+Company still applies. New grants use All for internal scope storage; editing an existing grant preserves its
+historical scope values. The same policy appears in the saved User summary.
+
 In the current company provider, blank Company means all companies; blank or zero numeric ceilings mean Unlimited,
 so a finite zero ceiling cannot be represented. My Department resolves membership, while Departments I head resolves
 head seats. The User summary shows saved authority and current department roots where available; save User changes

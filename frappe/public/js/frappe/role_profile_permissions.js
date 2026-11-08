@@ -30,7 +30,7 @@ frappe.provide("frappe.profile_permissions");
 		(doc.approval_scope_values || []).filter(
 			(value) => row.rule_key && value.rule_key === row.rule_key
 		);
-	function summary(row, doc) {
+	function summary(row, doc, step) {
 		const kind = row.scope_kind || "All";
 		const scope =
 			row.scope_source === "Fixed values"
@@ -38,8 +38,13 @@ frappe.provide("frappe.profile_permissions");
 						.map((value) => value.value)
 						.join(", ")
 				: row.scope_source || "All";
-		const parts = [row.company || __("All companies"), `${kind}: ${scope}`];
-		if (row.include_descendants && kind !== "All") parts.push(__("Includes descendants"));
+		const parts = [
+			row.company || __("All companies"),
+			step?.scope_policy || `${kind}: ${scope}`,
+		];
+		if (!step?.scope_policy && row.include_descendants && kind !== "All") {
+			parts.push(__("Includes descendants"));
+		}
 		for (const [field, label] of [
 			["max_amount", "Amount"],
 			["max_percent", "Percent"],
@@ -148,6 +153,10 @@ frappe.provide("frappe.profile_permissions");
 		const initial_step = steps.find((step) => step.step_id === row?.step);
 		const find_step = () => steps.find((step) => step.step_id === dialog.get_value("step"));
 		async function update_scope(reset) {
+			if (find_step()?.scope_policy) {
+				update_fixed();
+				return;
+			}
 			const kind = dialog.get_value("scope_kind");
 			const sources = scope_sources(kind, catalog);
 			dialog.set_df_property("scope_source", "options", sources.join("\n"));
@@ -162,7 +171,8 @@ frappe.provide("frappe.profile_permissions");
 		}
 		function update_fixed() {
 			if (!dialog) return;
-			const fixed = dialog.get_value("scope_source") === "Fixed values";
+			const fixed =
+				!find_step()?.scope_policy && dialog.get_value("scope_source") === "Fixed values";
 			dialog.set_df_property("fixed_values", "hidden", !fixed);
 			dialog.set_df_property("fixed_values", "reqd", fixed ? 1 : 0);
 		}
@@ -172,9 +182,10 @@ frappe.provide("frappe.profile_permissions");
 			const step = find_step();
 			const scopes = ["All", ...(step?.allowed_scopes || []).filter((x) => x !== "All")];
 			dialog.set_df_property("scope_kind", "options", ["", ...scopes].join("\n"));
-			if (reset) {
+			if (reset || (step?.scope_policy && row?.step !== step.step_id)) {
 				await dialog.set_values({
-					scope_kind: scopes.length === 1 ? "All" : "",
+					scope_kind: step?.scope_policy || scopes.length === 1 ? "All" : "",
+					...(step?.scope_policy ? { scope_source: "All", fixed_values: [] } : {}),
 					max_amount: 0,
 					max_percent: 0,
 					max_grade: 0,
@@ -187,15 +198,27 @@ frappe.provide("frappe.profile_permissions");
 					!ceilings(step?.limit_kind).includes(field)
 				);
 			}
+			dialog.set_df_property("limits_section", "hidden", !ceilings(step?.limit_kind).length);
 			const details = step
 				? [step.flow, step.reference_doctype, step.state, ...(step.actions || [])].join(
 						" · "
 				  )
 				: __("Choose a live Approval or Maker Limit step.");
 			dialog.fields_dict.details.$wrapper.html(
-				`<p class="text-muted">${escape(details)}</p>`
+				`<p class="text-muted">${escape(details)}</p>` +
+					(step?.scope_policy
+						? `<p><strong>${escape(step.scope_policy)}</strong></p>`
+						: "") +
+					(step?.note ? `<p class="text-muted">${escape(step.note)}</p>` : "")
 			);
+			for (const field of ["scope_section", "scope_kind", "scope_source"]) {
+				dialog.set_df_property(field, "hidden", Boolean(step?.scope_policy));
+			}
+			for (const field of ["scope_kind", "scope_source"]) {
+				dialog.set_df_property(field, "reqd", step?.scope_policy ? 0 : 1);
+			}
 			await update_scope(reset);
+			if (step?.scope_policy) dialog.set_df_property("include_descendants", "hidden", true);
 			updating = false;
 		}
 		dialog = new frappe.ui.Dialog({
@@ -269,12 +292,32 @@ frappe.provide("frappe.profile_permissions");
 			primary_action(values) {
 				if (updating) return;
 				const step = find_step();
-				const error = validate(values, step, catalog);
+				const next = { ...values };
+				if (step?.scope_policy) {
+					Object.assign(
+						next,
+						row?.step === step.step_id
+							? {
+									scope_kind: row.scope_kind || "All",
+									scope_source: row.scope_source || "All",
+									include_descendants: row.include_descendants || 0,
+									fixed_values: scope_values(frm.doc, row).map(
+										(item) => item.value
+									),
+							  }
+							: {
+									scope_kind: "All",
+									scope_source: "All",
+									include_descendants: 0,
+									fixed_values: [],
+							  }
+					);
+				}
+				const error = validate(next, step, catalog);
 				if (error) {
 					frappe.msgprint(error);
 					return;
 				}
-				const next = { ...values };
 				for (const field of ["max_amount", "max_percent", "max_grade"]) {
 					if (!ceilings(step.limit_kind).includes(field)) {
 						next[field] = row?.step === step.step_id ? row[field] || 0 : 0;
@@ -342,7 +385,7 @@ frappe.provide("frappe.profile_permissions");
 					step?.reference_doctype || row.doctype_label || ""
 				)}
 					 · ${escape(step?.kind || "")}</div>
-					<div class="text-muted">${escape(summary(row, frm.doc))}</div>`;
+					<div class="text-muted">${escape(summary(row, frm.doc, step))}</div>`;
 				if (!step)
 					html += `<div class="text-danger">${escape(
 						__("This permission is no longer available in the live catalog.")
@@ -404,7 +447,7 @@ frappe.provide("frappe.profile_permissions");
 				rows
 					.map(
 						(row, index) => `<tr><td><strong>${escape(row.step)}</strong>
-				<div class="text-muted">${escape(summary(row, frm.doc))}</div></td>
+				<div class="text-muted">${escape(summary(row, frm.doc, steps.get(row.step)))}</div></td>
 				<td>${select(index, "ask_mode", ["Ask", "Stand-in"], row.ask_mode || "Ask")}</td>
 				<td>${select(
 					index,
