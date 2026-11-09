@@ -91,7 +91,8 @@ class PostgresTable(DBTable):
 			query.append(
 				"ALTER COLUMN `{}` TYPE {} {}".format(
 					col.fieldname,
-					get_definition(col.fieldtype, precision=col.precision, length=col.length),
+					col._preserved_decimal_type
+					or get_definition(col.fieldtype, precision=col.precision, length=col.length),
 					using_clause,
 				)
 			)

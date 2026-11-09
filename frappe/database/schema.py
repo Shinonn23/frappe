@@ -9,6 +9,7 @@ from frappe.utils.defaults import get_not_null_defaults
 SPECIAL_CHAR_PATTERN = re.compile(r"[\W]", flags=re.UNICODE)
 
 VARCHAR_CAST_PATTERN = re.compile(r"varchar\(([\d]+)\)")
+DECIMAL_CAST_PATTERN = re.compile(r"decimal\((\d+),(\d+)\)")
 
 CONFIGURABLE_DECIMAL_TYPES = ("Currency", "Float", "Percent")
 DEFAULT_DECIMAL_LENGTH = 21
@@ -207,9 +208,10 @@ class DbColumn:
 		self.unique = unique
 		self.precision = precision
 		self.not_nullable = not_nullable
+		self._preserved_decimal_type = None
 
 	def get_definition(self, for_modification=False):
-		column_def = get_definition(
+		column_def = self._preserved_decimal_type or get_definition(
 			self.fieldtype,
 			precision=self.precision,
 			length=self.length,
@@ -279,6 +281,23 @@ class DbColumn:
 			return
 
 		# type
+		current_decimal = DECIMAL_CAST_PATTERN.fullmatch(current_def["type"])
+		new_decimal = DECIMAL_CAST_PATTERN.fullmatch(column_type)
+		if current_decimal and new_decimal:
+			old_width, old_scale = map(int, current_decimal.groups())
+			new_width, new_scale = map(int, new_decimal.groups())
+			# Metadata precision must not round stored fractions or remove integer capacity during sync.
+			self.precision = max(old_scale, new_scale)
+			self.length = max(old_width - old_scale, new_width - new_scale) + self.precision
+			max_width, max_scale = (65, 38) if frappe.db.db_type == "mariadb" else (1000, 1000)
+			if self.length > max_width or self.precision > max_scale:
+				frappe.throw(
+					_("Cannot preserve decimal capacity for {0}.{1}: decimal({2},{3}) is unsupported").format(
+						self.table.doctype, self.fieldname, self.length, self.precision
+					)
+				)
+			column_type = self._preserved_decimal_type = f"decimal({self.length},{self.precision})"
+
 		if current_def["type"] != column_type and not (
 			# XXX: MariaDB JSON is same as longtext and information schema still returns longtext
 			current_def["type"] == "longtext" and column_type == "json" and frappe.db.db_type == "mariadb"
