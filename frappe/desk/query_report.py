@@ -1248,6 +1248,11 @@ def validate_filters_permissions(report_name, filters=None, user=None, js_filter
 			field = field.as_dict()
 		if field.get("fieldname") in filters and field.get("fieldtype") == "Link":
 			linked_doctype = field.get("options")
+			value = filters[field.get("fieldname")]
+			if linked_doctype == "DocType" and isinstance(value, str) and frappe.db.exists("DocType", value):
+				# A document type filter is usable when the user can access that type, without schema access.
+				if has_permission(value, "read", user=user) or has_permission(value, "select", user=user):
+					continue
 			if not has_permission(
 				doctype=linked_doctype, ptype="read", doc=filters[field.get("fieldname")], user=user
 			) and not has_permission(
