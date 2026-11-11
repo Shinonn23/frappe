@@ -503,8 +503,11 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 		} else {
 			const get_df = frappe.meta.get_docfield.bind(null, this.doctype);
 
-			// 1st column: title_field or name
-			if (this.meta.title_field) {
+			const has_title_field = this.meta.title_field && this.meta.title_field !== "name";
+			const id_first = has_title_field && !this.settings.hide_name_column;
+
+			// 1st column: ID (name), followed by title_field; or title_field alone when ID is hidden
+			if (has_title_field && !id_first) {
 				this.columns.push({
 					type: "Subject",
 					df: get_df(this.meta.title_field),
@@ -517,6 +520,13 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 						fieldname: "name",
 					},
 				});
+				if (id_first) {
+					this.columns.push({
+						type: "Field",
+						fixed: true,
+						df: get_df(this.meta.title_field),
+					});
+				}
 			}
 
 			// 3rd column: Status indicator
@@ -556,20 +566,6 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 			this.columns.splice(1, 0, {
 				type: "Tag",
 			});
-
-			if (
-				!this.settings.hide_name_column &&
-				this.meta.title_field &&
-				this.meta.title_field !== "name"
-			) {
-				this.columns.push({
-					type: "Field",
-					df: {
-						label: __("ID"),
-						fieldname: "name",
-					},
-				});
-			}
 		}
 
 		await this.ensure_column_fields_fetched();
@@ -644,8 +640,19 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 	/** Build list columns directly from saved layout / settings field list (order preserved). */
 	build_columns_from_fields(fields) {
 		const get_df = frappe.meta.get_docfield.bind(null, this.doctype);
-		const subject_fieldname = this.meta.title_field?.trim() || "name";
+		const title_fieldname = this.meta.title_field?.trim();
+		const subject_fieldname =
+			title_fieldname && this.settings.hide_name_column ? title_fieldname : "name";
 		const columns = [];
+		if (!fields.some((field) => field.fieldname === subject_fieldname)) {
+			columns.push({
+				type: "Subject",
+				df:
+					subject_fieldname === "name"
+						? { label: __("ID"), fieldname: "name" }
+						: get_df(subject_fieldname),
+			});
+		}
 
 		fields.forEach((field) => {
 			if (field.fieldname === "status_field") {
@@ -686,6 +693,14 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 		}
 		fields_order.push(subjectCol);
 		this.columns.splice(0, 1);
+
+		// title column shown next to ID is fixed too
+		if (this.columns[0]?.fixed) {
+			const titleCol = this.columns.shift();
+			const titleSettings = fields.find((f) => f.fieldname === titleCol.df?.fieldname);
+			if (titleSettings?.width) titleCol.df.width = titleSettings.width;
+			fields_order.push(titleCol);
+		}
 
 		for (const field of fields) {
 			for (const column of this.columns) {
@@ -929,6 +944,9 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 			this.list_filter.update_layout_columns(layout, columns);
 			return;
 		}
+
+		// List View Settings are shared by all users; without write access keep the width on screen only.
+		if (!frappe.model.can_write("List View Settings")) return;
 
 		let fields;
 
