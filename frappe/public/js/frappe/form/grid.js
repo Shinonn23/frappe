@@ -898,7 +898,8 @@ export default class Grid {
 		// be mutated in place.
 		this.docfields = this.docfields.map((df) => {
 			if (!(df.fieldname in this.column_disp_overrides)) return df;
-			return Object.assign({}, df, { hidden: this.column_disp_overrides[df.fieldname] });
+			const hidden = this.column_disp_overrides[df.fieldname];
+			return Object.assign({}, df, { hidden, in_list_view: hidden ? 0 : 1 });
 		});
 	}
 
@@ -1045,7 +1046,7 @@ export default class Grid {
 		this.debounced_refresh();
 	}
 
-	set_column_disp_in_list_view(fieldname, show) {
+	set_column_disp_in_list_view(fieldname, show, required = false) {
 		// Show/hide a column in this grid's list view (the static, read-only row
 		// rendering). Unlike `set_column_disp`, the change is kept as a grid-local
 		// override and never mutates the shared meta docfield, so other grids of
@@ -1053,8 +1054,11 @@ export default class Grid {
 		// applied to a grid-local docfield copy in `_apply_column_disp_overrides`
 		// (called from `setup_fields`).
 		const fieldnames = Array.isArray(fieldname) ? fieldname : [fieldname];
+		this.required_list_columns ||= new Set();
 		for (let field of fieldnames) {
 			this.column_disp_overrides[field] = show ? 0 : 1;
+			if (show && required) this.required_list_columns.add(field);
+			else this.required_list_columns.delete(field);
 		}
 
 		this._teardown_column_layout();
@@ -1476,6 +1480,14 @@ export default class Grid {
 
 		this.user_defined_columns = [];
 		this.setup_user_defined_columns();
+		if (this.user_defined_columns.length && this.required_list_columns?.size) {
+			const selected = new Set(this.user_defined_columns.map((df) => df.fieldname));
+			for (const df of this.docfields) {
+				if (this.required_list_columns.has(df.fieldname) && !selected.has(df.fieldname)) {
+					this.user_defined_columns.push(df);
+				}
+			}
+		}
 		const use_user_columns = this.user_defined_columns.length > 0;
 		const fields = use_user_columns
 			? this.user_defined_columns
