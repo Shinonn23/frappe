@@ -159,6 +159,10 @@ class PrintFormatGenerator:
 
 	def build_context(self):
 		self.print_settings = frappe.get_doc("Print Settings")
+		if not self.doc.flags.in_print:
+			from frappe.www.printview import run_before_print
+
+			run_before_print(self.doc, self.print_settings.as_dict())
 		page_width_map = {"A4": 210, "Letter": 216}
 		page_size = None
 		if self.print_settings.pdf_page_size == "Custom":

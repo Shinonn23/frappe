@@ -54,6 +54,12 @@ def format_value(value, df=None, doc=None, currency=None, translated=False, form
 		# Convert dict to object if necessary
 		df = frappe._dict(df)
 
+	print_precision = (getattr(doc, "flags", None) or {}).get("print_precision")
+	if print_precision is not None and df.get("fieldtype") in ("Currency", "Float"):
+		# Print precision belongs to this render, never the cached DocField or stored value.
+		df = frappe._dict(df if isinstance(df, dict) else df.as_dict())
+		df.precision = print_precision
+
 	if value is None:
 		value = ""
 	elif translated:
@@ -94,7 +100,7 @@ def format_value(value, df=None, doc=None, currency=None, translated=False, form
 
 		# show 1.000000 as 1
 		# options should not specified
-		if not df.options and value is not None:
+		if print_precision is None and not df.options and value is not None:
 			temp = cstr(value).split(".")
 			if len(temp) == 1 or cint(temp[1]) == 0:
 				precision = 0
