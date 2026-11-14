@@ -8,6 +8,7 @@ perms will get synced only if none exist
 import glob
 import os
 import re
+from pathlib import Path
 
 import frappe
 from frappe.desk.doctype.desktop_icon.desktop_icon import import_desktop_icon_fixtures
@@ -356,7 +357,8 @@ def create_entity_file_map(entities):
 			entity_folder = frappe.scrub(entity)
 			if entity_folder == "dashboard":
 				entity_folder = f"*_{entity_folder}"
-			entity_files = list(glob.glob(f"{app_path}/**/{entity_folder}/**/*.json", recursive=True))
+			# Do not follow public/node_modules links into dependency trees.
+			entity_files = (str(path) for path in Path(app_path).glob(f"**/{entity_folder}/**/*.json"))
 			for file in entity_files:
 				entity_json = read_doc_from_file(file)
 				if isinstance(entity_json, dict):
