@@ -639,6 +639,32 @@ def get_filecontent_from_path(path):
 
 	if path.startswith("/"):
 		path = path[1:]
+	if path.startswith(("files/", "private/files/")):
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+		if gcs_storage.enabled():
+			from google.api_core.exceptions import NotFound as GCSNotFound
+			from google.api_core.exceptions import PreconditionFailed
+			from werkzeug.exceptions import NotFound
+
+			url = "/" + path
+			try:
+				if path.startswith("files/"):
+					return gcs_storage.read_public(url)
+				from frappe.core.doctype.file.utils import find_file_by_url
+
+				file = find_file_by_url(url)
+				if not file:
+					return None
+				if url not in (file.file_url, file.thumbnail_url):
+					entry = gcs_storage.private_thumbnail(url)
+					if not entry or entry.source_file != file.name:
+						return None
+					content, generation = gcs_storage.read_versioned(url)
+					return content if str(generation) == str(entry.generation) else None
+				return gcs_storage.read(url)
+			except (NotFound, GCSNotFound, PreconditionFailed, ValueError):
+				return None
 
 	if path.startswith("assets/"):
 		# from public folder

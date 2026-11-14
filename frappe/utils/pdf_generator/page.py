@@ -137,6 +137,42 @@ class Page:
 					parsed = urllib.parse.urlparse(url)
 					clean_path = urllib.parse.unquote(parsed.path).lstrip("/")
 					query_params = urllib.parse.parse_qs(parsed.query)
+					if clean_path.startswith(("files/", "private/files/")):
+						from frappe.integrations.doctype.google_cloud_storage_settings import (
+							storage as gcs_storage,
+						)
+
+						if gcs_storage.enabled():
+							from google.api_core.exceptions import NotFound as GCSNotFound
+							from google.api_core.exceptions import PreconditionFailed
+							from werkzeug.exceptions import NotFound
+
+							file_url = "/" + clean_path
+							try:
+								if clean_path.startswith("files/"):
+									content = gcs_storage.read_public(file_url)
+								else:
+									fid = query_params.get("fid", [None])[0]
+									file = find_file_by_url(file_url, name=fid) if frappe.session.user != "Guest" else None
+									if not file:
+										raise NotFound
+									if file_url not in (file.file_url, file.thumbnail_url):
+										entry = gcs_storage.private_thumbnail(file_url)
+										if not entry or entry.source_file != file.name:
+											raise NotFound
+										content, generation = gcs_storage.read_versioned(file_url)
+										if str(generation) != str(entry.generation):
+											raise NotFound
+									else:
+										content = gcs_storage.read(file_url)
+								response_headers = [{"name": "Content-Type", "value": "image/svg+xml"}] if clean_path.endswith(".svg") else []
+								self.session.send("Fetch.fulfillRequest", {
+									"requestId": data["request_id"], "responseCode": 200,
+									"responseHeaders": response_headers, "body": base64.b64encode(content).decode(),
+								}, return_future=True)
+							except (NotFound, GCSNotFound, PreconditionFailed, ValueError):
+								self.session.send("Fetch.failRequest", {"requestId": data["request_id"], "errorReason": "AccessDenied"}, return_future=True)
+							return
 
 					if clean_path.startswith("assets/"):
 						final_system_path = os.path.abspath(os.path.join(bench_sites, clean_path))

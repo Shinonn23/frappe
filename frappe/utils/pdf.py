@@ -6,6 +6,7 @@ import io
 import mimetypes
 import os
 import subprocess
+import tempfile
 from urllib.parse import parse_qs, urlparse
 
 import cssutils
@@ -45,6 +46,23 @@ class FrappePDFKit(OriginalPDFKit):
 		function should be used.
 		"""
 		return {}
+
+	def to_pdf(self, path=None):
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+		if not gcs_storage.enabled():
+			return super().to_pdf(path)
+		with tempfile.TemporaryDirectory(prefix="frappe-wkhtml-", dir=gcs_storage.memory_directory()) as directory:
+			previous = self.environ
+			self.environ = dict(previous or os.environ)
+			self.environ.update({
+				"TMPDIR": directory, "XDG_CACHE_HOME": directory,
+				"XDG_CONFIG_HOME": directory, "XDG_RUNTIME_DIR": directory,
+			})
+			try:
+				return super().to_pdf(path)
+			finally:
+				self.environ = previous
 
 
 # Replace PDFKit in all relevant modules
@@ -181,6 +199,15 @@ def get_chrome_pdf(print_format, html, options, output, pdf_generator=None):
 	# scrubbing url to expand url is not required as we have set url.
 	# also, planning to remove network requests anyway 🤞
 	generator = ChromePDFGenerator()
+	from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+	if gcs_storage.enabled() and not getattr(generator, "_memory_workspace", None):
+		if generator._browsers:
+			frappe.throw(_("Chromium is in use with disk storage; retry after its current requests finish."))
+		generator._close_browser()
+		generator = ChromePDFGenerator()
+		if not getattr(generator, "_memory_workspace", None):
+			frappe.throw(_("Chromium must use memory-only storage when Google Cloud Storage is enabled."))
 	browser = None
 	try:
 		browser = Browser(generator, print_format, html, options)
@@ -255,12 +282,16 @@ def get_cookie_options():
 	options = {}
 	if frappe.session and frappe.session.sid and hasattr(frappe.local, "request"):
 		# Use wkhtmltopdf's cookie-jar feature to set cookies and restrict them to host domain
-		cookiejar = f"/tmp/{frappe.generate_hash()}.jar"
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+		fd, cookiejar = tempfile.mkstemp(
+			prefix="frappe-pdf-", suffix=".jar", dir=gcs_storage.memory_directory() if gcs_storage.enabled() else None
+		)
 
 		# Remove port from request.host
 		# https://werkzeug.palletsprojects.com/en/0.16.x/wrappers/#werkzeug.wrappers.BaseRequest.host
 		domain = frappe.utils.get_host_name().split(":", 1)[0]
-		with open(cookiejar, "w") as f:
+		with os.fdopen(fd, "w") as f:
 			f.write(f"sid={frappe.session.sid}; Domain={domain};\n")
 
 		options["cookie-jar"] = cookiejar
@@ -353,7 +384,21 @@ def _get_base64_image(src):
 		if not file or not file.is_private:
 			return
 
-		b64_encoded_image = base64.b64encode(file.get_content()).decode()
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+		if gcs_storage.enabled() and path != file.file_url:
+			if path != file.thumbnail_url:
+				entry = gcs_storage.private_thumbnail(path)
+				if not entry or entry.source_file != file.name:
+					return
+				content, generation = gcs_storage.read_versioned(path)
+				if str(generation) != str(entry.generation):
+					return
+			else:
+				content = gcs_storage.read(path)
+		else:
+			content = file.get_content()
+		b64_encoded_image = base64.b64encode(content).decode()
 		return f"data:{mime_type};base64,{b64_encoded_image}"
 	except Exception:
 		frappe.logger("pdf").error("Failed to convert inline images to base64", exc_info=True)
@@ -392,8 +437,12 @@ def prepare_header_footer(soup: BeautifulSoup):
 			)
 
 			# create temp file
-			fname = os.path.join("/tmp", f"frappe-pdf-{frappe.generate_hash()}.html")
-			with open(fname, "wb") as f:
+			from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+			fd, fname = tempfile.mkstemp(
+				prefix="frappe-pdf-", suffix=".html", dir=gcs_storage.memory_directory() if gcs_storage.enabled() else None
+			)
+			with os.fdopen(fd, "wb") as f:
 				f.write(html.encode("utf-8"))
 
 			# {"header-html": "/tmp/frappe-pdf-random.html"}

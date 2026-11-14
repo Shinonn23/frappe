@@ -248,11 +248,29 @@ def has_typst_blocks(layout) -> bool:
 	)
 
 
+def typst_font_root() -> str:
+	import hashlib
+	import os
+	import stat
+
+	from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+	if not gcs_storage.enabled():
+		return frappe.get_site_path("private", "files", "typst_fonts")
+	identity = f"{os.path.realpath(frappe.get_site_path())}\0{frappe.local.site}".encode()
+	root = os.path.join(gcs_storage.memory_directory(), "frappe-typst-" + hashlib.sha256(identity).hexdigest())
+	os.makedirs(root, mode=0o700, exist_ok=True)
+	info = os.lstat(root)
+	if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+		raise RuntimeError("Unsafe Typst font cache directory")
+	return root
+
+
 def typst_font_paths() -> list[str]:
 	"""Directories Typst loads fonts from — the site's cache plus system fonts."""
 	import os
 
-	path = frappe.get_site_path("private", "files", "typst_fonts")
+	path = typst_font_root()
 	return [os.path.abspath(path)] if os.path.isdir(path) else []
 
 
@@ -264,7 +282,9 @@ def compile_typst_source(source: str) -> bytes:
 
 	import typst
 
-	with tempfile.TemporaryDirectory() as tmp:
+	from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+	with tempfile.TemporaryDirectory(dir=gcs_storage.memory_directory() if gcs_storage.enabled() else None) as tmp:
 		path = os.path.join(tmp, "main.typ")
 		# nosemgrep: frappe-semgrep-rules.rules.security.frappe-security-file-traversal
 		with open(path, "w") as f:
@@ -290,7 +310,7 @@ def ensure_typst_fonts(family: str | None):
 		return
 	import time
 
-	root = frappe.get_site_path("private", "files", "typst_fonts")
+	root = typst_font_root()
 	target = os.path.join(root, safe_family)
 	if os.path.isdir(target) and os.listdir(target):
 		return
@@ -959,7 +979,27 @@ class TypstEmitter:
 		if src.startswith(("http://", "https://")):
 			return None
 		src = src.split("?", 1)[0]
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
 		if src.startswith("/private/files/"):
+			if gcs_storage.enabled():
+				from google.api_core.exceptions import NotFound, PreconditionFailed
+
+				from frappe.core.doctype.file.utils import find_file_by_url
+
+				file = find_file_by_url(src)
+				if not file:
+					return None
+				try:
+					if src not in (file.file_url, file.thumbnail_url):
+						entry = gcs_storage.private_thumbnail(src)
+						if not entry or entry.source_file != file.name:
+							return None
+						content, generation = gcs_storage.read_versioned(src)
+						return content if str(generation) == str(entry.generation) else None
+					return gcs_storage.read(src)
+				except (NotFound, PreconditionFailed, ValueError):
+					return None
 			# private files are permission-gated through the File doctype — the
 			# browser path enforces this over HTTP, so the direct read must too
 			file_names = frappe.get_all("File", filters={"file_url": src}, pluck="name")
@@ -967,6 +1007,13 @@ class TypstEmitter:
 				return None
 			root, rel = frappe.get_site_path("private", "files"), src[len("/private/files/") :]
 		elif src.startswith("/files/"):
+			if gcs_storage.enabled():
+				from werkzeug.exceptions import NotFound
+
+				try:
+					return gcs_storage.read_public(src)
+				except NotFound:
+					return None
 			root, rel = frappe.get_site_path("public", "files"), src[len("/files/") :]
 		elif src.startswith("/assets/"):
 			# each app's assets are a symlink into the app, so contain within the app

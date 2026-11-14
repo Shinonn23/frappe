@@ -1,0 +1,75 @@
+{
+ "actions": [],
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["enabled", "bucket_name", "object_prefix", "isolation_confirmed", "proxy_confirmed", "last_migration_result", "last_integrity_result"],
+ "fields": [
+  {
+   "description": "Latest completed copy, preflight, reconciliation, activation, or cleanup. Refresh after the job finishes; failed jobs are shown in Background Jobs.",
+   "fieldname": "last_migration_result",
+   "fieldtype": "Code",
+   "label": "Last Migration Result",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set by the Activate Storage action after verification. Disabling requires a reverse migration.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "read_only": 1
+  },
+  {
+   "description": "Bucket used for both public and private files. Keep the bucket private; Frappe will control access.",
+   "fieldname": "bucket_name",
+   "fieldtype": "Data",
+   "label": "Bucket Name"
+  },
+  {
+   "description": "Required unique prefix for this site. Use a different prefix for each site sharing a bucket.",
+   "fieldname": "object_prefix",
+   "fieldtype": "Data",
+   "label": "Object Prefix"
+  },
+  {
+   "default": "0",
+   "description": "Confirm all site web and worker processes use the updated guard on one host, and old workers and external file writers are stopped.",
+   "fieldname": "isolation_confirmed",
+   "fieldtype": "Check",
+   "label": "Single Host and Writers Confirmed"
+  },
+  {
+   "default": "0",
+   "description": "Confirm Nginx has been reloaded with /files/ forwarded to Frappe and request and response buffering disabled.",
+   "fieldname": "proxy_confirmed",
+   "fieldtype": "Check",
+   "label": "Nginx Routing Confirmed"
+  },
+  {
+   "description": "Latest completed integrity check, including up to 100 example File records. Refresh the form after the job finishes.",
+   "fieldname": "last_integrity_result",
+   "fieldtype": "Code",
+   "label": "Last Integrity Check",
+   "options": "JSON",
+   "read_only": 1
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "module": "Integrations",
+ "name": "Google Cloud Storage Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

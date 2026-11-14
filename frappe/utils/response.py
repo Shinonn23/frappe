@@ -3,6 +3,7 @@
 
 import datetime
 import functools
+import io
 import mimetypes
 import os
 import sys
@@ -303,7 +304,62 @@ def download_private_file(path: str) -> Response:
 		raise Forbidden(_("You don't have permission to access this file"))
 
 	make_access_log(doctype="File", document=file.name, file_type=os.path.splitext(path)[-1][1:])
+	from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+	if gcs_storage.enabled():
+		filename = file.file_name if path == file.file_url else os.path.basename(path)
+		expected = None
+		if path not in (file.file_url, file.thumbnail_url):
+			entry = gcs_storage.private_thumbnail(path)
+			if not entry or entry.source_file != file.name:
+				raise NotFound
+			expected = entry.generation
+		return send_gcs_file(path, filename=filename, private=True, expected_generation=expected)
 	return send_private_file(path.split("/private", 1)[1], filename=file.file_name)
+
+
+def send_gcs_file(path: str, filename: str | None = None, private: bool = False, expected_generation=None) -> Response:
+	from google.api_core.exceptions import NotFound as GCSNotFound
+	from google.api_core.exceptions import PreconditionFailed
+
+	from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+	try:
+		if not private:
+			content = gcs_storage.read_public(path)
+		elif expected_generation:
+			content, generation = gcs_storage.read_versioned(path)
+			if str(generation) != str(expected_generation):
+				raise NotFound
+		else:
+			content = gcs_storage.read(path)
+	except (GCSNotFound, PreconditionFailed, ValueError) as exc:
+		raise NotFound from exc
+	filename = filename or os.path.basename(path)
+	response = werkzeug.utils.send_file(
+		io.BytesIO(content),
+		environ=frappe.local.request.environ,
+		as_attachment=os.path.splitext(filename)[1].lower() in FORCE_DOWNLOAD_EXTENSIONS,
+		download_name=filename,
+	)
+	if private:
+		response.headers["Cache-Control"] = "private, no-store"
+	return response
+
+
+def send_public_file(path: str) -> Response:
+	from frappe.core.doctype.file.utils import check_path_safety
+
+	base = frappe.get_site_path("public", "files")
+	file_path = os.path.join(base, path.removeprefix("/files/"))
+	if not check_path_safety(base, file_path) or not os.path.isfile(file_path):
+		raise NotFound
+	return werkzeug.utils.send_file(
+		file_path,
+		environ=frappe.local.request.environ,
+		conditional=True,
+		as_attachment=os.path.splitext(file_path)[1].lower() in FORCE_DOWNLOAD_EXTENSIONS,
+	)
 
 
 FORCE_DOWNLOAD_EXTENSIONS = (

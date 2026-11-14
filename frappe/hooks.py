@@ -292,6 +292,7 @@ scheduler_events = {
 	],
 	"daily_long": [],
 	"daily_maintenance": [
+		"frappe.integrations.doctype.google_cloud_storage_settings.chunk_upload.cleanup_abandoned_uploads",
 		"frappe.email.doctype.auto_email_report.auto_email_report.send_daily",
 		"frappe.desk.notifications.clear_notifications",
 		"frappe.sessions.clear_expired_sessions",

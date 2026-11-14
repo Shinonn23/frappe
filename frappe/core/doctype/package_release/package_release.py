@@ -76,10 +76,72 @@ class PackageRelease(Document):
 
 	def export_files(self, package):
 		"""Export all the documents in this package to site/packages folder"""
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+		if gcs_storage.enabled():
+			self.export_to_bucket(package)
+			return
 
 		self.export_modules()
 		self.export_package_files(package)
 		self.make_tarfile(package)
+
+	def export_to_bucket(self, package):
+		import io
+		import tarfile
+		from pathlib import PurePosixPath
+
+		from frappe.modules import scrub, scrub_dt_dn
+		from frappe.modules.export_file import get_module_name, strip_default_fields
+
+		def safe_part(value):
+			if not value or value in (".", "..") or "/" in value or "\\" in value or "\x00" in value:
+				raise ValueError("Invalid package archive path")
+			return value
+
+		root = safe_part(package.package_name)
+		entries = {f"{root}/{root}.json": frappe.as_json(package.as_dict(no_nulls=True))}
+		if package.readme:
+			entries[f"{root}/README.md"] = package.readme
+		if package.license:
+			entries[f"{root}/LICENSE.md"] = package.license
+		for module_ref in frappe.get_all("Module Def", {"package": self.package}):
+			module = frappe.get_doc("Module Def", module_ref.name)
+			for link in module.meta.links:
+				if link.link_doctype == "Module Def":
+					continue
+				for reference in frappe.get_all(link.link_doctype, {"module": module_ref.name}):
+					doc = frappe.get_doc(link.link_doctype, reference.name)
+					module_name = get_module_name(doc)
+					if frappe.db.get_value("Module Def", module_name, "package") != self.package:
+						continue
+					dt, dn = scrub_dt_dn(doc.doctype, doc.name)
+					folder = PurePosixPath(root, safe_part(scrub(module_name)), safe_part(dt), safe_part(dn))
+					data = doc.as_dict(no_nulls=True, ignore_computed_child_tables=True)
+					doc.run_method("before_export", data)
+					data = strip_default_fields(doc, data)
+					if hasattr(doc, "get_code_fields"):
+						for key, extension in doc.get_code_fields().items():
+							if doc.get(key):
+								entries[str(folder / f"{dn}.{safe_part(extension)}")] = doc.get(key)
+								del data[key]
+					entries[str(folder / f"{dn}.json")] = frappe.as_json(data) + "\n"
+					for parent in (folder, folder.parent, folder.parent.parent):
+						entries.setdefault(str(parent / "__init__.py"), "")
+		content = io.BytesIO()
+		with tarfile.open(fileobj=content, mode="w:gz") as archive:
+			for name, value in entries.items():
+				data = value.encode("utf-8")
+				info = tarfile.TarInfo(name)
+				info.size, info.mode = len(data), 0o644
+				archive.addfile(info, io.BytesIO(data))
+		file = frappe.get_doc({
+			"doctype": "File", "file_name": f"{self.name}.tar.gz", "content": content.getvalue(),
+			"attached_to_doctype": self.doctype, "attached_to_name": self.name,
+		})
+		file.flags.ignore_duplicate_entry_error = True
+		file.insert()
+		self.path = file.file_url
 
 	def export_modules(self):
 		for m in frappe.get_all("Module Def", dict(package=self.package)):
@@ -111,6 +173,23 @@ class PackageRelease(Document):
 	def make_tarfile(self, package):
 		# make tarfile
 		filename = f"{self.name}.tar.gz"
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+		if gcs_storage.enabled():
+			import io
+			import tarfile
+
+			content = io.BytesIO()
+			with tarfile.open(fileobj=content, mode="w:gz") as archive:
+				archive.add(frappe.get_site_path("packages", package.package_name), arcname=package.package_name)
+			file = frappe.get_doc({
+				"doctype": "File", "file_name": filename, "content": content.getvalue(),
+				"attached_to_doctype": self.doctype, "attached_to_name": self.name,
+			})
+			file.flags.ignore_duplicate_entry_error = True
+			file.insert()
+			self.path = file.file_url
+			return
 		subprocess.check_output(
 			["tar", "czf", filename, package.package_name], cwd=frappe.get_site_path("packages")
 		)

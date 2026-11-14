@@ -267,10 +267,12 @@ def execute_job(site, method, event, job_name, kwargs, user=None, is_async=True,
 		after_job=CallbackManager(),
 	)
 
-	for before_job_task in frappe.get_hooks("before_job"):
-		frappe.call(before_job_task, method=method_name, kwargs=kwargs, transaction_type="job")
-
 	try:
+		from frappe.integrations.doctype.google_cloud_storage_settings.cutover_lock import register_job
+
+		register_job(method_name)
+		for before_job_task in frappe.get_hooks("before_job"):
+			frappe.call(before_job_task, method=method_name, kwargs=kwargs, transaction_type="job")
 		retval = method(**kwargs)
 
 	except (

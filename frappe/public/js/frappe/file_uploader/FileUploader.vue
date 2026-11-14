@@ -586,10 +586,14 @@ function return_as_dataurl() {
 async function upload_file(file, i) {
 	currently_uploading.value = i;
 
-	const CHUNK_SIZE = frappe.boot.file_chunk_size || 25 * 1024 * 1024;
+	const configured_chunk_size = frappe.boot.file_chunk_size || 25 * 1024 * 1024;
+	const CHUNK_SIZE = frappe.boot.gcs_file_storage
+		? Math.min(configured_chunk_size, Math.max(1, (frappe.boot.max_file_size || configured_chunk_size) - 65536))
+		: configured_chunk_size;
 
 	const use_chunks = file.file_obj && file.file_obj.size > CHUNK_SIZE;
 	const total_chunks = use_chunks ? Math.ceil(file.file_obj.size / CHUNK_SIZE) : 1;
+	const upload_id = use_chunks && frappe.boot.gcs_file_storage ? crypto.randomUUID() : null;
 
 	const send_chunk = (chunk_blob, chunk_index, chunk_byte_offset) => {
 		return new Promise((resolve, reject) => {
@@ -712,6 +716,7 @@ async function upload_file(file, i) {
 				form_data.append("chunk_index", chunk_index);
 				form_data.append("total_chunk_count", total_chunks);
 				form_data.append("chunk_byte_offset", chunk_byte_offset);
+				if (upload_id) form_data.append("upload_id", upload_id);
 			}
 
 			if (file.file_url) form_data.append("file_url", file.file_url);

@@ -1,10 +1,13 @@
 # Copyright (c) 2021, Frappe Technologies and contributors
 # For license information, please see license.txt
 
+import io
 import json
 import os
 import re
 import tarfile
+import tempfile
+from contextlib import nullcontext
 
 import frappe
 from frappe.core.doctype.file.utils import check_path_safety
@@ -48,14 +51,27 @@ class PackageImport(Document):
 		if not package_name:
 			frappe.throw(frappe._("Invalid Package Name"))
 
-		if not os.path.exists(frappe.get_site_path("packages")):
-			os.makedirs(frappe.get_site_path("packages"))
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
 
-		# extract
-		extract_path = frappe.get_site_path("packages")
-		archive_path = get_files_path(attachment.file_name, is_private=attachment.is_private)
-		with tarfile.open(archive_path, "r:gz") as tar:
-			for member in tar.getmembers():
+		if gcs_storage.enabled():
+			archive = {"fileobj": io.BytesIO(gcs_storage.read(attachment.file_url))}
+			workspace = tempfile.TemporaryDirectory(prefix="frappe-package-", dir=gcs_storage.memory_directory())
+		else:
+			archive = {"name": get_files_path(attachment.file_name, is_private=attachment.is_private)}
+			extract_path = frappe.get_site_path("packages")
+			os.makedirs(extract_path, exist_ok=True)
+			workspace = nullcontext(extract_path)
+		with workspace as extract_path:
+			self.import_archive(archive, extract_path, package_name)
+
+	def import_archive(self, archive, extract_path, package_name):
+		from frappe.core.api.file import get_max_extract_size
+
+		with tarfile.open(mode="r:gz", **archive) as tar:
+			members = tar.getmembers()
+			if sum(member.size for member in members if member.isfile()) > get_max_extract_size():
+				frappe.throw(frappe._("Package exceeds the maximum allowed extracted size"))
+			for member in members:
 				if member.issym() or member.islnk():
 					frappe.throw(frappe._(f"Package contains disallowed link entry: {member.name}"))
 
@@ -66,7 +82,7 @@ class PackageImport(Document):
 
 			tar.extractall(path=extract_path, filter="data")
 
-		package_path = frappe.get_site_path("packages", package_name)
+		package_path = os.path.join(extract_path, package_name)
 
 		# import Package
 		with open(os.path.join(package_path, package_name + ".json")) as packagefile:

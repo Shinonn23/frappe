@@ -361,7 +361,7 @@ def get_events(
 	if isinstance(filters, str):
 		filters = json.loads(filters)
 
-	filter_condition = get_filters_cond("Event", filters, [])
+	filter_condition = get_filters_cond("Event", filters, []).replace("%", "%%")
 
 	tables = ["`tabEvent`"]
 	if "`tabEvent Participants`" in filter_condition:

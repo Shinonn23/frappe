@@ -625,7 +625,9 @@ class PrintFormatGenerator:
 		emitter.prepare()
 		repeat = cint(self.print_settings.get("repeat_header_footer"))
 
-		with tempfile.TemporaryDirectory() as tmp:
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+		with tempfile.TemporaryDirectory(dir=gcs_storage.memory_directory() if gcs_storage.enabled() else None) as tmp:
 
 			def write(name, content, mode="w"):
 				# names are emitter-generated constants inside a fresh tempdir

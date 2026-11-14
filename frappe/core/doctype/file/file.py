@@ -15,6 +15,11 @@ import frappe
 from frappe import _
 from frappe.database.schema import SPECIAL_CHAR_PATTERN
 from frappe.exceptions import DoesNotExistError
+from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+from frappe.integrations.doctype.google_cloud_storage_settings.cutover_lock import (
+	register_object,
+	register_writer,
+)
 from frappe.model.db_query import requires_owner_constraint
 from frappe.model.document import Document
 from frappe.permissions import SYSTEM_USER_ROLE, get_doctypes_with_read, get_role_permissions
@@ -105,6 +110,7 @@ class File(Document):
 			self.name = frappe.generate_hash(length=10)
 
 	def before_insert(self):
+		register_writer()
 		if self.attached_to_doctype and not self.attached_to_name:
 			self.attached_to_doctype = None
 			self.attached_to_field = None
@@ -123,6 +129,8 @@ class File(Document):
 			if self.file_url:
 				frappe.throw(_("A folder cannot have a File URL"))
 			return
+		if gcs_storage.enabled() and self.thumbnail_url:
+			register_object(self.thumbnail_url)
 
 		if self.flags.copy_from_existing_file:
 			# Preserve the normal insert lifecycle for hooks and validations, but skip
@@ -132,6 +140,10 @@ class File(Document):
 					_("File URL is required when copying an existing attachment."),
 					exc=frappe.MandatoryError,
 				)
+			if gcs_storage.enabled() and not self.is_remote_file:
+				register_object(self.file_url)
+				if not self.exists_on_disk():
+					frappe.throw(_("File {0} does not exist").format(self.file_url), IOError)
 			return
 
 		if self.is_remote_file:
@@ -174,6 +186,7 @@ class File(Document):
 		return attachment.insert(ignore_permissions=ignore_permissions)
 
 	def validate(self):
+		register_writer()
 		if self.is_folder:
 			if self.file_url:
 				frappe.throw(_("A folder cannot have a File URL"))
@@ -184,6 +197,13 @@ class File(Document):
 
 		self.validate_attachment_references()
 		self.enforce_public_file_restrictions()
+		if gcs_storage.enabled():
+			for field in ("file_url", "thumbnail_url"):
+				if self.has_value_changed(field):
+					previous = self.get_doc_before_save()
+					if previous:
+						register_object(previous.get(field))
+					register_object(self.get(field))
 
 		# when dict is passed to get_doc for creation of new_doc, is_new returns None
 		# this case is handled inside handle_is_private_changed
@@ -232,37 +252,43 @@ class File(Document):
 		existing_files = frappe.get_all(
 			"File",
 			filters={"file_url": self.file_url},
-			fields=["name", "owner", "is_private"],
-			limit=1,
+			fields=["name", "owner", "is_private", "file_url"],
+			limit_page_length=0,
 		)
-
-		if not existing_files:
+		private_files = [file for file in existing_files if file.file_url == self.file_url and file.is_private]
+		if not private_files:
+			if (
+				self.file_url.startswith("/private/files/") and gcs_storage.enabled()
+				and not self.content and not self.flags.ignore_permissions
+			):
+				frappe.throw(_("You do not have permission to access this file"), frappe.PermissionError)
 			return
-
-		existing_file = existing_files[0]
-
-		if existing_file.is_private:
-			user = frappe.session.user
-
+		user = frappe.session.user
+		for existing_file in private_files:
 			if user == existing_file.owner or user == "Administrator":
 				return
-
 			existing_doc = frappe.get_doc("File", existing_file.name)
-			if not has_permission(existing_doc, "read", user=user):
-				frappe.throw(
-					_("You do not have permission to access this file"),
-					frappe.PermissionError,
-				)
+			if has_permission(existing_doc, "read", user=user):
+				return
+		frappe.throw(_("You do not have permission to access this file"), frappe.PermissionError)
 
 	def after_rename(self, *args, **kwargs):
 		for successor in self.get_successors():
 			setup_folder_path(successor, self.name)
 
 	def on_trash(self):
+		register_writer()
 		if self.is_home_folder or self.is_attachments_folder:
 			frappe.throw(_("Cannot delete Home and Attachments folders"))
 		self.validate_empty_folder()
 		self.validate_protected_file()
+		if gcs_storage.enabled():
+			register_object(self.file_url)
+			register_object(self.thumbnail_url)
+			for entry in frappe.get_all("GCS Private Thumbnail", filters={"source_file": self.name}, fields=["file_url", "generation"]):
+				register_object(entry.file_url)
+				frappe.db.delete("GCS Private Thumbnail", {"file_url": entry.file_url, "source_file": self.name})
+				gcs_storage.cleanup_unreferenced_after_commit(entry.file_url, entry.generation)
 		self._delete_file_on_disk()
 		if not self.is_folder:
 			self.add_comment_in_reference_doc("Attachment Removed", self.file_name)
@@ -276,12 +302,18 @@ class File(Document):
 
 		# following condition is only executed when an insert has been rolledback
 		if self.flags.new_file:
-			self._delete_file_on_disk()
+			if not self.flags.gcs_written:
+				self.flags.gcs_rollback = True
+				self._delete_file_on_disk()
+				self.flags.pop("gcs_rollback", None)
 			pop_rollback_flags()
 			return
 
 		# if original_content flag is set, this rollback should revert the file to its original state
 		if self.flags.original_content:
+			if gcs_storage.enabled() and not self.is_remote_file:
+				pop_rollback_flags()
+				return
 			file_path = self.get_full_path()
 
 			if isinstance(self.flags.original_content, bytes):
@@ -361,24 +393,96 @@ class File(Document):
 		if updated_file_url == old_file_url:
 			return
 
-		if not source.exists():
-			frappe.throw(
-				_("Cannot find file {} on disk").format(source),
-				exc=FileNotFoundError,
+		if gcs_storage.enabled():
+			register_object(old_file_url)
+			register_object(updated_file_url)
+			self.validate_gcs_move_target(updated_file_url)
+			old_thumbnail = self.thumbnail_url
+			old_root = "/files/" if self.is_private else "/private/files/"
+			new_thumbnail = None
+			thumbnail_names = []
+			if old_thumbnail and old_thumbnail.startswith(old_root):
+				new_thumbnail = url_starts_with + old_thumbnail.removeprefix(old_root)
+				if old_thumbnail != old_file_url:
+					if new_thumbnail == updated_file_url:
+						frappe.throw(_("The file and thumbnail would use the same destination."))
+					register_object(old_thumbnail)
+					register_object(new_thumbnail)
+					self.validate_gcs_move_target(new_thumbnail)
+				thumbnail_refs = frappe.db.get_values(
+					"File", {"thumbnail_url": old_thumbnail}, ["name", "file_url", "thumbnail_url"], as_dict=True, for_update=True
+				)
+				thumbnail_names = [row.name for row in thumbnail_refs if row.thumbnail_url == old_thumbnail and row.file_url == old_file_url]
+				if self.is_private and any(row.thumbnail_url == old_thumbnail and row.file_url != old_file_url for row in thumbnail_refs):
+					frappe.throw(_("This thumbnail is shared with another file. Replace it before making this file private."))
+			source_generation, target_generation = gcs_storage.copy(old_file_url, updated_file_url)
+			frappe.db.after_rollback.add(
+				lambda: gcs_storage.delete(updated_file_url, if_generation_match=target_generation)
 			)
-		if target.exists():
-			frappe.throw(
-				_("A file with same name {} already exists").format(target),
-				exc=FileExistsError,
-			)
+			if self.is_private:
+				gcs_storage.block_public(old_file_url)
+			else:
+				gcs_storage.unblock_public(updated_file_url)
+			privacy = cint(self.is_private)
+			content_hash = self.content_hash
 
-		# Uses os.rename which is an atomic operation
-		shutil.move(source, target)
-		self.flags.original_path = {"old": source, "new": target}
-		frappe.db.after_rollback.add(self.on_rollback)
+			def finish_move():
+				matching_urls = frappe.db.get_values("File", {
+					"file_url": updated_file_url, "is_private": privacy, "content_hash": content_hash,
+				}, "file_url", pluck=True)
+				moved = updated_file_url in matching_urls
+				if not moved:
+					gcs_storage.delete_if_unreferenced(updated_file_url, target_generation)
+				else:
+					gcs_storage.delete_if_unreferenced(old_file_url, source_generation)
+
+			frappe.db.after_commit.add(finish_move)
+			if new_thumbnail and old_thumbnail == old_file_url:
+				if thumbnail_names:
+					frappe.db.set_value("File", {"name": ["in", thumbnail_names]}, "thumbnail_url", updated_file_url)
+				self.thumbnail_url = updated_file_url
+			elif new_thumbnail:
+				old_gen, new_gen = gcs_storage.copy(old_thumbnail, new_thumbnail)
+				frappe.db.after_rollback.add(
+					lambda: gcs_storage.delete(new_thumbnail, if_generation_match=new_gen)
+				)
+				if self.is_private:
+					gcs_storage.block_public(old_thumbnail)
+				else:
+					gcs_storage.unblock_public(new_thumbnail)
+				if thumbnail_names:
+					frappe.db.set_value("File", {"name": ["in", thumbnail_names]}, "thumbnail_url", new_thumbnail)
+				self.thumbnail_url = new_thumbnail
+
+				def delete_old_thumbnail():
+					matching_thumbnails = frappe.db.get_values(
+						"File", {"thumbnail_url": new_thumbnail, "is_private": privacy}, "thumbnail_url", pluck=True
+					)
+					if new_thumbnail not in matching_thumbnails:
+						gcs_storage.delete_if_unreferenced(new_thumbnail, new_gen)
+					else:
+						gcs_storage.delete_if_unreferenced(old_thumbnail, old_gen)
+
+				frappe.db.after_commit.add(delete_old_thumbnail)
+		else:
+			if not source.exists():
+				frappe.throw(
+					_("Cannot find file {} on disk").format(source),
+					exc=FileNotFoundError,
+				)
+			if target.exists():
+				frappe.throw(
+					_("A file with same name {} already exists").format(target),
+					exc=FileExistsError,
+				)
+
+			# Uses os.rename which is an atomic operation
+			shutil.move(source, target)
+			self.flags.original_path = {"old": source, "new": target}
+			frappe.db.after_rollback.add(self.on_rollback)
 
 		self.file_url = updated_file_url
-		update_existing_file_docs(self)
+		update_existing_file_docs(self, old_file_url)
 
 		if (
 			not self.attached_to_doctype
@@ -387,19 +491,15 @@ class File(Document):
 		):
 			return
 
-		if frappe.get_meta(self.attached_to_doctype).issingle:
-			frappe.db.set_single_value(
-				self.attached_to_doctype,
-				self.attached_to_field,
-				self.file_url,
-			)
-		else:
-			frappe.db.set_value(
-				self.attached_to_doctype,
-				self.attached_to_name,
-				self.attached_to_field,
-				self.file_url,
-			)
+		from frappe.core.doctype.file.utils import update_attachment_field
+
+		update_attachment_field(self.attached_to_doctype, self.attached_to_name, self.attached_to_field, old_file_url, self.file_url)
+
+	def validate_gcs_move_target(self, file_url):
+		for field in ("file_url", "thumbnail_url"):
+			matches = frappe.db.get_values("File", {field: file_url}, field, pluck=True, for_update=True, order_by=None)
+			if file_url in matches:
+				frappe.throw(_("A File already references {0}").format(file_url), exc=FileExistsError)
 
 	def fetch_attached_to_field(self, old_file_url):
 		if self.attached_to_field:
@@ -470,6 +570,10 @@ class File(Document):
 
 	def validate_file_on_disk(self):
 		"""Validates existence file"""
+		if gcs_storage.enabled() and not self.is_remote_file:
+			if not gcs_storage.exists(self.file_url):
+				frappe.throw(_("File {0} does not exist").format(self.file_url), IOError)
+			return True
 		full_path = self.get_full_path()
 
 		if full_path.startswith(URL_PREFIXES):
@@ -523,6 +627,8 @@ class File(Document):
 			duplicate_file = frappe.db.get_value("File", filters, ["name", "file_url"], as_dict=1)
 
 			if duplicate_file:
+				if gcs_storage.enabled():
+					register_object(duplicate_file.file_url)
 				duplicate_file_doc = frappe.get_cached_doc("File", duplicate_file.name)
 				if duplicate_file_doc.exists_on_disk():
 					# just use the url, to avoid uploading a duplicate
@@ -542,6 +648,9 @@ class File(Document):
 	def generate_content_hash(self):
 		if self.content_hash or not self.file_url or self.is_remote_file:
 			return
+		if gcs_storage.enabled():
+			self.content_hash = get_content_hash(gcs_storage.read(self.file_url))
+			return
 		file_name = self.file_url.split("/")[-1]
 		try:
 			file_path = get_files_path(file_name, is_private=self.is_private)
@@ -559,6 +668,8 @@ class File(Document):
 		crop: bool = False,
 	) -> str:
 		from requests.exceptions import HTTPError, SSLError
+
+		register_writer()
 
 		if not self.file_url:
 			return
@@ -578,6 +689,30 @@ class File(Document):
 			image.thumbnail(size, Image.Resampling.LANCZOS)
 
 		thumbnail_url = f"{filename}_{suffix}.{extn}"
+		if gcs_storage.enabled():
+			register_object(thumbnail_url)
+			if gcs_storage.exists(thumbnail_url):
+				thumbnail_url = f"{filename}_{suffix}_{frappe.generate_hash(length=8)}.{extn}"
+				register_object(thumbnail_url)
+			output = io.BytesIO()
+			image.save(output, format=Image.registered_extensions().get(f".{extn.lower()}"))
+			generation = gcs_storage.write(thumbnail_url, output.getvalue(), if_generation_match=0)
+			frappe.db.after_rollback.add(
+				lambda: gcs_storage.delete(thumbnail_url, if_generation_match=generation)
+			)
+			if thumbnail_url.startswith("/files/"):
+				gcs_storage.unblock_public(thumbnail_url)
+			if set_as_thumbnail:
+				self.db_set("thumbnail_url", thumbnail_url)
+			elif thumbnail_url.startswith("/files/"):
+				gcs_storage.allow_unmanaged_public(thumbnail_url, generation)
+			else:
+				frappe.get_doc({
+					"doctype": "GCS Private Thumbnail", "url_hash": gcs_storage.public_url_hash(thumbnail_url),
+					"file_url": thumbnail_url, "source_file": self.name, "generation": str(generation),
+				}).insert(ignore_permissions=True)
+			gcs_storage.cleanup_unreferenced_after_commit(thumbnail_url, generation)
+			return thumbnail_url
 		path = os.path.abspath(frappe.get_site_path("public", thumbnail_url.lstrip("/")))
 
 		try:
@@ -652,7 +787,7 @@ class File(Document):
 
 		self.check_permission("read")
 
-		zip_path = self.get_full_path()
+		zip_path = io.BytesIO(gcs_storage.read(self.file_url)) if gcs_storage.enabled() else self.get_full_path()
 		max_extracted_size = get_max_extract_size()
 
 		files = []
@@ -712,6 +847,8 @@ class File(Document):
 		return files
 
 	def exists_on_disk(self):
+		if gcs_storage.enabled() and not self.is_remote_file:
+			return bool(self.file_url and gcs_storage.exists(self.file_url))
 		return os.path.exists(self.get_full_path())
 
 	def get_content(self, encodings=None) -> bytes | str:
@@ -730,23 +867,20 @@ class File(Document):
 
 		if self.file_url:
 			self.validate_file_url()
-		file_path = self.get_full_path()
-
 		if encodings is None:
 			encodings = FILE_ENCODING_OPTIONS
-		with open(file_path, mode="rb") as f:
-			self._content = f.read()
-			if not self._content.startswith(OLE_FILE_SIGNATURE):
-				# looping will not result in slowdown, as the content is usually utf-8 or utf-8-sig
-				# encoded so the first iteration will be enough most of the time
-				for encoding in encodings:
-					try:
-						# read file with proper encoding
-						self._content = self._content.decode(encoding)
-						break
-					except UnicodeDecodeError:
-						# for .png, .jpg, etc
-						continue
+		if gcs_storage.enabled() and not self.is_remote_file:
+			self._content = gcs_storage.read(self.file_url)
+		else:
+			with open(self.get_full_path(), mode="rb") as f:
+				self._content = f.read()
+		if not self._content.startswith(OLE_FILE_SIGNATURE):
+			for encoding in encodings:
+				try:
+					self._content = self._content.decode(encoding)
+					break
+				except UnicodeDecodeError:
+					continue
 
 		return self._content
 
@@ -787,6 +921,7 @@ class File(Document):
 
 	def write_file(self):
 		"""write file to disk with a random name (to compare)"""
+		register_writer()
 		if self.is_remote_file:
 			return
 
@@ -810,6 +945,7 @@ class File(Document):
 		ignore_existing_file_check=False,
 		overwrite=False,
 	):
+		register_writer()
 		if self.is_remote_file:
 			return
 
@@ -851,6 +987,8 @@ class File(Document):
 			)
 
 		if duplicate_file:
+			if gcs_storage.enabled():
+				register_object(duplicate_file.file_url)
 			file_doc: File = frappe.get_cached_doc("File", duplicate_file.name)
 			if file_doc.exists_on_disk():
 				if self.exists_on_disk():
@@ -868,6 +1006,31 @@ class File(Document):
 					is_private=self.is_private,
 				)
 			call_hook_method("before_write_file", file_size=self.file_size)
+			if gcs_storage.enabled():
+				if not self.file_url:
+					root = "/private/files/" if self.is_private else "/files/"
+					self.file_url = root + get_safe_file_name(self.file_name)
+				content = self._content.encode() if isinstance(self._content, str) else self._content
+				self._content = content
+				self.check_content()
+				file_url = self.file_url
+				register_object(file_url)
+				original_content, original_generation = gcs_storage.read_versioned(file_url) if overwrite else (None, 0)
+				generation = gcs_storage.write(
+					file_url, content, content_type=self.content_type,
+					if_generation_match=original_generation,
+				)
+				if overwrite:
+					gcs_storage.restore_on_rollback(file_url, original_content, generation)
+				else:
+					self.flags.gcs_written = True
+					frappe.db.after_rollback.add(
+						lambda: gcs_storage.delete(file_url, if_generation_match=generation)
+					)
+					gcs_storage.cleanup_unreferenced_after_commit(file_url, generation)
+				if not self.is_private:
+					gcs_storage.unblock_public(self.file_url)
+				return {"file_name": self.file_name, "file_url": self.file_url}
 			write_file_method = get_hook_method("write_file")
 			if write_file_method:
 				return write_file_method(self)
@@ -899,6 +1062,20 @@ class File(Document):
 		return file_size
 
 	def delete_file_data_content(self, only_thumbnail=False):
+		if gcs_storage.enabled():
+			urls = (self.thumbnail_url,) if only_thumbnail or self.is_remote_file else (self.file_url, self.thumbnail_url)
+			for url in filter(None, urls):
+				if not url.startswith(("/files/", "/private/files/")):
+					continue
+				register_object(url)
+				generation = gcs_storage.generation(url)
+				if generation is None:
+					continue
+				if self.flags.gcs_rollback:
+					gcs_storage.delete(url, if_generation_match=generation)
+				else:
+					gcs_storage.cleanup_unreferenced_after_commit(url, generation)
+			return
 		method = get_hook_method("delete_file_data_content")
 		if method:
 			method(self, only_thumbnail=only_thumbnail)

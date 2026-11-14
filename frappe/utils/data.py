@@ -1811,7 +1811,7 @@ def pdf_to_base64(filename: str) -> bytes | None:
 	"""Return the base64 encoded string for the given PDF file.
 
 	Return None if the file is not found or is not a PDF file."""
-	from frappe.utils.file_manager import get_file_path
+	from frappe.utils.file_manager import get_file_path, read_file_bytes
 
 	if "../" in filename or filename.rsplit(".")[-1] not in ["pdf", "PDF"]:
 		return
@@ -1820,8 +1820,7 @@ def pdf_to_base64(filename: str) -> bytes | None:
 	if not file_path:
 		return
 
-	with open(file_path, "rb") as pdf_file:
-		base64_string = base64.b64encode(pdf_file.read())
+	base64_string = base64.b64encode(read_file_bytes(file_path))
 
 	return base64_string
 

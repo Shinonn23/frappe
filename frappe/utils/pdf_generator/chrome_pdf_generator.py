@@ -1,6 +1,7 @@
 import os
 import platform
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import ClassVar
@@ -61,6 +62,10 @@ class ChromePDFGenerator:
 		# only when we want to chromium on separate docker / server ( not implemented/tested yet )
 		self.CHROMIUM_WEBSOCKET_URL = site_config.get("chromium_websocket_url", "")
 		if self.CHROMIUM_WEBSOCKET_URL:
+			from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+			if gcs_storage.enabled():
+				frappe.throw(_("External Chromium cannot be verified to use memory-only storage."))
 			frappe.warn("Using external chromium websocket url. Make sure it is accessible.")
 			self._devtools_url = self.CHROMIUM_WEBSOCKET_URL
 			return
@@ -105,6 +110,11 @@ class ChromePDFGenerator:
 		  https://source.chromium.org/chromium/chromium/src/+/main:content/app/content_main.cc;l=229-241?q=DBUS_SESSION_BUS_ADDRESS&ss=chromium
 		"""
 		try:
+			from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+			memory_only = gcs_storage.enabled()
+			if memory_only and debug:
+				frappe.throw(_("Interactive Chromium debugging is unavailable with Google Cloud Storage."))
 			if debug:
 				command_args = [
 					"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",  # path to locally installed chrome browser for debugging.
@@ -168,9 +178,19 @@ class ChromePDFGenerator:
 					# "--disable-checker-imaging",
 				]
 
+			if memory_only:
+				self._memory_workspace = tempfile.TemporaryDirectory(prefix="frappe-chromium-", dir=gcs_storage.memory_directory())
+				root = self._memory_workspace.name
+				command_args = [arg for arg in command_args if not arg.startswith("--user-data-dir=") and arg != "--disable-dev-shm-usage"]
+				command_args.extend([f"--user-data-dir={root}/profile", f"--disk-cache-dir={root}/cache"])
+				self._chromium_env = os.environ.copy()
+				self._chromium_env.update({"TMPDIR": root, "XDG_CACHE_HOME": root, "XDG_CONFIG_HOME": root, "XDG_RUNTIME_DIR": root})
 			self._start_chromium_process(command_args)
 
 		except Exception as e:
+			if workspace := getattr(self, "_memory_workspace", None):
+				workspace.cleanup()
+				self._memory_workspace = None
 			frappe.log_error(f"Error starting Chromium: {e}")
 			frappe.throw(_("Could not start Chromium. Check logs for details."))
 
@@ -192,9 +212,8 @@ class ChromePDFGenerator:
 				text=True,
 			)
 		else:
-			self._chromium_process = subprocess.Popen(
-				command_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-			)
+			kwargs = {"env": self._chromium_env} if getattr(self, "_chromium_env", None) else {}
+			self._chromium_process = subprocess.Popen(command_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kwargs)
 		return self._chromium_process
 
 	def _set_devtools_url(self):
@@ -216,6 +235,8 @@ class ChromePDFGenerator:
 			# Read a single line from stderr and check if it contains the DevTools URL.
 			# Not using select() because it is not supported on Windows for non-socket file descriptors.
 			line = stderr.readline()
+			if not line and self._chromium_process.poll() is not None:
+				raise RuntimeError("Chromium exited before DevTools became available.")
 			# not sure if "DevTools listening on" is consistent in all chromium versions.
 			if "DevTools listening on" in line:
 				url_start = line.find("ws://")
@@ -236,6 +257,15 @@ class ChromePDFGenerator:
 			return
 		if self._chromium_process:
 			self._chromium_process.terminate()
+			if getattr(self, "_memory_workspace", None):
+				try:
+					self._chromium_process.wait(timeout=5)
+				except subprocess.TimeoutExpired:
+					self._chromium_process.kill()
+					self._chromium_process.wait()
+		if workspace := getattr(self, "_memory_workspace", None):
+			workspace.cleanup()
+			self._memory_workspace = None
 		ChromePDFGenerator._instance = None
 		self._chromium_process = None
 		self._devtools_url = None

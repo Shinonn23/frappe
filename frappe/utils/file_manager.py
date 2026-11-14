@@ -145,6 +145,26 @@ def get_uploaded_content():
 
 
 def save_file(fname, content, dt, dn, folder=None, decode=False, is_private=0, df=None):
+	from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+	if gcs_storage.enabled():
+		file = frappe.get_doc(
+			{
+				"doctype": "File",
+				"file_name": fname,
+				"content": content,
+				"decode": decode,
+				"attached_to_doctype": dt,
+				"attached_to_name": dn,
+				"attached_to_field": df,
+				"folder": folder,
+				"is_private": is_private,
+			}
+		)
+		try:
+			return file.insert(ignore_permissions=True)
+		except frappe.DuplicateEntryError:
+			return frappe.get_doc("File", file.duplicate_entry)
 	if decode:
 		if isinstance(content, str):
 			content = content.encode("utf-8")
@@ -227,6 +247,9 @@ def check_max_file_size(content):
 
 def write_file(content, fname, is_private=0):
 	"""write file to disk with a random name (to compare)"""
+	from frappe.integrations.doctype.google_cloud_storage_settings.cutover_lock import register_writer
+
+	register_writer()
 	file_path = get_files_path(is_private=is_private)
 
 	# create directory (if not exists)
@@ -295,6 +318,10 @@ def remove_file(
 
 
 def delete_file_data_content(doc, only_thumbnail=False):
+	from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+	if gcs_storage.enabled():
+		return doc.delete_file_data_content(only_thumbnail=only_thumbnail)
 	method = get_hook_method("delete_file_data_content", fallback=delete_file_from_filesystem)
 	method(doc, only_thumbnail=only_thumbnail)
 
@@ -310,6 +337,14 @@ def delete_file_from_filesystem(doc, only_thumbnail=False):
 
 def delete_file(path):
 	"""Delete file from `public folder`"""
+	from frappe.integrations.doctype.google_cloud_storage_settings.cutover_lock import register_writer
+
+	register_writer()
+	from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+	if gcs_storage.enabled():
+		gcs_storage.schedule_file_deletion("/" + path.lstrip("/") if path else None)
+		return
 	if path:
 		if ".." in path.split("/"):
 			frappe.msgprint(
@@ -333,16 +368,28 @@ def get_file(fname):
 	file_path = get_file_path(fname)
 
 	# read the file
-	with open(encode(file_path), mode="rb") as f:
-		content = f.read()
-		try:
-			# for plain text files
-			content = content.decode()
-		except UnicodeDecodeError:
-			# for .png, .jpg, etc
-			pass
+	content = read_file_bytes(file_path)
+	try:
+		content = content.decode()
+	except UnicodeDecodeError:
+		pass
 
 	return [file_path.rsplit("/", 1)[-1], content]
+
+
+def read_file_bytes(file_path):
+	from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+	if gcs_storage.enabled():
+		path = os.path.realpath(file_path)
+		for is_private in (1, 0):
+			root = os.path.realpath(get_files_path(is_private=is_private))
+			if os.path.commonpath((root, path)) == root:
+				url_root = "/private/files/" if is_private else "/files/"
+				return gcs_storage.read(url_root + os.path.relpath(path, root).replace(os.sep, "/"))
+		frappe.throw(_("Cannot access file path {0}").format(file_path))
+	with open(encode(file_path), mode="rb") as f:
+		return f.read()
 
 
 def get_file_path(file_name):

@@ -1175,12 +1175,11 @@ class Database:
 
 	def commit(self, *, chain=False):
 		"""Commit current transaction. Calls SQL `COMMIT`."""
+		if getattr(self, "_gcs_rollback_failed", False) is True:
+			raise RuntimeError("A GCS savepoint rollback failed; roll back the entire transaction")
 		if self._disable_transaction_control:
 			warnings.warn(message=TRANSACTION_DISABLED_MSG, stacklevel=2)
 			return
-
-		self.before_rollback.reset()
-		self.after_rollback.reset()
 
 		self.before_commit.run()
 
@@ -1188,15 +1187,25 @@ class Database:
 			self.sql("commit and chain")
 		else:
 			self.sql("commit")
+
+		self.before_rollback.reset()
+		self.after_rollback.reset()
+		if not chain:
 			self.begin()
 
 		self.value_cache.clear()
+		self._gcs_savepoints = []
+		self._gcs_savepoint_offsets = {}
+		self._gcs_overwrite_history = []
 		self.after_commit.run()
 
 	def rollback(self, *, save_point=None, chain=False):
 		"""`ROLLBACK` current transaction. Optionally rollback to a known save_point."""
 		if save_point:
 			self.sql(f"rollback to savepoint {save_point}")
+			self._rollback_gcs_savepoint(save_point)
+			if save_point in getattr(self, "_gcs_savepoints", []):
+				self._gcs_savepoints = self._gcs_savepoints[: self._gcs_savepoints.index(save_point) + 1]
 			self.value_cache.clear()
 		elif not self._disable_transaction_control:
 			self.before_commit.reset()
@@ -1212,7 +1221,16 @@ class Database:
 				self.begin()
 
 			self.value_cache.clear()
-			self.after_rollback.run()
+			self._gcs_savepoints = []
+			try:
+				self.after_rollback.run()
+			except Exception:
+				if getattr(self, "_gcs_rollback_failed", False) is True or getattr(frappe.local, "gcs_overwrites", None):
+					self._gcs_rollback_failed = True
+				raise
+			self._gcs_savepoint_offsets = {}
+			self._gcs_overwrite_history = []
+			self._gcs_rollback_failed = False
 		else:
 			warnings.warn(message=TRANSACTION_DISABLED_MSG, stacklevel=2)
 
@@ -1225,9 +1243,42 @@ class Database:
 		        so only changes to database are undone when rolling back to a savepoint.
 		        Avoid using savepoints when writing to filesystem."""
 		self.sql(f"savepoint {save_point}")
+		points = getattr(self, "_gcs_savepoints", [])
+		self._gcs_savepoints = [point for point in points if point != save_point] + [save_point]
+		offsets = getattr(self, "_gcs_savepoint_offsets", None)
+		if not isinstance(offsets, dict):
+			offsets = self._gcs_savepoint_offsets = {}
+		history = getattr(self, "_gcs_overwrite_history", None)
+		offsets[save_point] = len(history) if isinstance(history, list) else 0
+
+	def _rollback_gcs_savepoint(self, save_point):
+		offsets = getattr(self, "_gcs_savepoint_offsets", {})
+		history = getattr(self, "_gcs_overwrite_history", [])
+		if not isinstance(offsets, dict) or not isinstance(history, list) or save_point not in offsets:
+			return
+		if len(history) > offsets[save_point]:
+			from frappe.integrations.doctype.google_cloud_storage_settings.storage import (
+				rollback_savepoint_overwrites,
+			)
+
+			try:
+				rollback_savepoint_overwrites(history, offsets[save_point])
+			except Exception:
+				self._gcs_rollback_failed = True
+				raise
+		points = getattr(self, "_gcs_savepoints", [])
+		if save_point in points:
+			for point in points[points.index(save_point) + 1 :]:
+				offsets.pop(point, None)
 
 	def release_savepoint(self, save_point):
 		self.sql(f"release savepoint {save_point}")
+		if save_point in getattr(self, "_gcs_savepoints", []):
+			for point in self._gcs_savepoints[self._gcs_savepoints.index(save_point) :]:
+				self._gcs_savepoint_offsets.pop(point, None)
+			self._gcs_savepoints = self._gcs_savepoints[: self._gcs_savepoints.index(save_point)]
+			if not self._gcs_savepoints:
+				self._gcs_overwrite_history = []
 
 	def field_exists(self, dt, fn):
 		"""Return true of field exists."""

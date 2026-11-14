@@ -85,6 +85,16 @@ def get_extension(
 def get_local_image(file_url: str) -> tuple["ImageFile", str, str]:
 	from PIL import Image
 
+	from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+	if gcs_storage.enabled():
+		content = gcs_storage.read(file_url)
+		image = Image.open(BytesIO(content))
+		filename, separator, extn = file_url.rpartition(".")
+		if not separator:
+			filename, extn = file_url, None
+		return image, filename, get_extension(filename, extn, content)
+
 	if file_url.startswith("/private"):
 		file_url_path = (file_url.lstrip("/"),)
 	else:
@@ -160,6 +170,14 @@ def get_web_image(file_url: str) -> tuple["ImageFile", str, str]:
 
 def delete_file(path: str) -> None:
 	"""Delete file from `public folder`"""
+	from frappe.integrations.doctype.google_cloud_storage_settings.cutover_lock import register_writer
+
+	register_writer()
+	from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+	if gcs_storage.enabled():
+		gcs_storage.schedule_file_deletion("/" + path.lstrip("/") if path else None)
+		return
 	if path:
 		if ".." in path.split("/"):
 			frappe.throw(
@@ -204,6 +222,11 @@ def generate_file_name(name: str, suffix: str | None = None, is_private: bool = 
 	"""
 
 	def path_exists(name, is_private):
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+		if gcs_storage.enabled():
+			root = "/private/files/" if is_private else "/files/"
+			return gcs_storage.exists(root + name)
 		return os.path.exists(encode(get_files_path(name, is_private=is_private)))
 
 	if not path_exists(name, is_private):
@@ -306,16 +329,43 @@ def get_random_filename(content_type: str | None = None) -> str:
 	return random_string(7) + (extn or "")
 
 
-def update_existing_file_docs(doc: "File") -> None:
+def update_existing_file_docs(doc: "File", old_file_url: str) -> None:
 	# Update is private and file url of all file docs that point to the same file
+	rows = frappe.db.get_values(
+		"File", {"file_url": old_file_url},
+		["name", "file_url", "attached_to_doctype", "attached_to_name", "attached_to_field"],
+		as_dict=True, for_update=True, order_by=None,
+	)
+	shared = [row for row in rows if row.file_url == old_file_url and row.name != doc.name]
+	names = [row.name for row in shared]
+	if not names:
+		return
 	file_doctype = frappe.qb.DocType("File")
 	(
 		frappe.qb.update(file_doctype)
 		.set(file_doctype.file_url, doc.file_url)
 		.set(file_doctype.is_private, doc.is_private)
-		.where(file_doctype.content_hash == doc.content_hash)
-		.where(file_doctype.name != doc.name)
+		.where(file_doctype.name.isin(names))
 	).run()
+	for row in sorted(shared, key=lambda row: (row.attached_to_doctype or "", row.attached_to_name or "", row.attached_to_field or "")):
+		if row.attached_to_doctype and row.attached_to_name and row.attached_to_field:
+			update_attachment_field(row.attached_to_doctype, row.attached_to_name, row.attached_to_field, old_file_url, doc.file_url)
+
+
+def update_attachment_field(doctype, name, field, old_url, new_url):
+	"""Update an attachment reference only if it still points at the moved file."""
+	try:
+		meta = frappe.get_meta(doctype)
+	except frappe.DoesNotExistError:
+		return
+	field_meta = meta.get_field(field)
+	if not field_meta or field_meta.get("is_virtual"):
+		return
+	if meta.issingle:
+		if frappe.db.get_single_value(doctype, field, cache=False, for_update=True) == old_url:
+			frappe.db.set_single_value(doctype, field, new_url)
+	elif frappe.db.get_value(doctype, name, field, for_update=True) == old_url:
+		frappe.db.set_value(doctype, name, field, new_url)
 
 
 def attach_files_to_document(doc: "Document", event) -> None:
@@ -469,9 +519,31 @@ def find_file_by_url(path: str, name: str | None = None) -> "File" | None:
 	# if the file is accessible from any one of those documents
 	# then it should be downloadable
 	for file_data in files:
+		if file_data.get("file_url") != path:
+			continue
 		file: File = frappe.get_doc(doctype="File", **file_data)
 		if file.is_downloadable():
 			return file
+
+	# Private thumbnails inherit access from their source File.
+	if path.startswith("/private/files/"):
+		thumbnail_filters = {"thumbnail_url": str(path)}
+		if name:
+			thumbnail_filters["name"] = str(name)
+		for file_data in frappe.get_all("File", filters=thumbnail_filters, fields="*"):
+			if file_data.get("thumbnail_url") != path:
+				continue
+			file = frappe.get_doc(doctype="File", **file_data)
+			if file.is_private and file.is_downloadable():
+				return file
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+		if gcs_storage.enabled() and (entry := gcs_storage.private_thumbnail(path)):
+			if not name or name == entry.source_file:
+				for file_data in frappe.get_all("File", filters={"name": entry.source_file, "is_private": 1}, fields="*"):
+					file = frappe.get_doc(doctype="File", **file_data)
+					if file.is_downloadable():
+						return file
 
 
 def get_safe_file_name(file_name: str) -> str:

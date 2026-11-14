@@ -46,6 +46,9 @@ def get_bootinfo():
 
 	# system info
 	bootinfo.sitename = frappe.local.site
+	from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+	bootinfo.gcs_file_storage = gcs_storage.enabled()
 	bootinfo.sysdefaults = frappe.defaults.get_defaults()
 	bootinfo.sysdefaults["setup_complete"] = frappe.is_setup_complete()
 

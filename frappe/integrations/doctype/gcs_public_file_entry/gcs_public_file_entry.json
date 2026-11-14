@@ -1,0 +1,20 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["url_hash", "file_url", "generation"],
+ "fields": [
+  {"fieldname": "url_hash", "fieldtype": "Data", "label": "URL Hash", "reqd": 1, "unique": 1},
+  {"fieldname": "file_url", "fieldtype": "Small Text", "label": "File URL", "reqd": 1},
+  {"fieldname": "generation", "fieldtype": "Data", "label": "Object Generation", "reqd": 1}
+ ],
+ "links": [],
+ "module": "Integrations",
+ "name": "GCS Public File Entry",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

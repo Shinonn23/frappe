@@ -89,6 +89,7 @@ dependencies = [
     "google-api-python-client~=2.188.0",
     "google-auth-oauthlib~=1.2.4",
     "google-auth~=2.48.0",
+    "google-cloud-storage~=3.8.0",
     "vobject~=0.9.9",
     "pycountry~=24.6.1",
     "websockets~=15.0.1",

@@ -644,7 +644,9 @@ def handle_html(data: str) -> str:
 def read_xlsx_file_from_attached_file(file_url=None, fcontent=None, filepath=None, *, read_only=False):
 	if file_url:
 		_file = frappe.get_doc("File", {"file_url": file_url})
-		filename = _file.get_full_path()
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+		filename = BytesIO(gcs_storage.read(_file.file_url)) if gcs_storage.enabled() else _file.get_full_path()
 	elif fcontent:
 		filename = BytesIO(fcontent)
 	elif filepath:

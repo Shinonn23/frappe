@@ -93,16 +93,25 @@ class WebsiteTheme(Document):
 	def generate_bootstrap_theme(self):
 		from subprocess import PIPE, Popen
 
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+		from frappe.integrations.doctype.google_cloud_storage_settings.cutover_lock import (
+			register_object,
+			register_writer,
+		)
+
+		register_writer()
+		cloud = gcs_storage.enabled()
 		# create theme file in site public files folder
 		folder_path = abspath(frappe.utils.get_files_path("website_theme", is_private=False))
 		# create folder if not exist
-		frappe.create_folder(folder_path)
+		if not cloud:
+			frappe.create_folder(folder_path)
 
-		if self.custom:
+		if self.custom and not cloud:
 			self.delete_old_theme_files(folder_path)
 
 		# add a random suffix
-		suffix = frappe.generate_hash(length=8) if self.custom else "style"
+		suffix = frappe.generate_hash(length=8) if self.custom or cloud else "style"
 		file_name = frappe.scrub(self.name) + "_" + suffix + ".css"
 
 		if os.sep in file_name or (os.altsep and os.altsep in file_name):
@@ -123,11 +132,11 @@ class WebsiteTheme(Document):
 
 		self.theme_scss = content = get_scss(self)
 		content = content.replace("\n", "\\n")
-		command = ["node", "generate_bootstrap_theme.js", output_path, content]
+		command = ["node", "generate_bootstrap_theme.js", "-" if cloud else output_path, content]
 
 		process = Popen(command, cwd=frappe.get_app_source_path("frappe"), stdout=PIPE, stderr=PIPE)
 
-		stderr = process.communicate()[1]
+		stdout, stderr = process.communicate()
 
 		if stderr:
 			stderr = frappe.safe_decode(stderr)
@@ -135,6 +144,23 @@ class WebsiteTheme(Document):
 			frappe.throw(f'<div style="font-family: monospace;">{stderr}</div>')
 		else:
 			self.theme_url = "/files/website_theme/" + file_name
+			if cloud:
+				register_object(self.theme_url)
+				url = self.theme_url
+				generation = gcs_storage.write(url, stdout, content_type="text/css", if_generation_match=0)
+				frappe.db.after_rollback.add(lambda: gcs_storage.delete(url, if_generation_match=generation))
+				gcs_storage.allow_unmanaged_public(self.theme_url, generation)
+				gcs_storage.cleanup_unreferenced_after_commit(url, generation)
+				if self.custom:
+					prefix = "/files/website_theme/" + frappe.scrub(self.name) + "_"
+					marker = gcs_storage.get_blob(prefix)
+					old = sorted(
+						(blob for blob in marker.bucket.list_blobs(prefix=marker.name) if blob.name.endswith(".css")),
+						key=lambda blob: blob.updated,
+						reverse=True,
+					)
+					for blob in old[3:]:
+						frappe.db.after_commit.add(lambda blob=blob: blob.delete(if_generation_match=blob.generation))
 
 		frappe.msgprint(_("Compiled Successfully"), alert=True)
 

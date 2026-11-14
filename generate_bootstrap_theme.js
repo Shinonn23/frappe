@@ -55,6 +55,10 @@ sass.render(
 		const bom = css.startsWith("﻿") ? "﻿" : "";
 		const { remote, body } = inline_css_imports(css.slice(bom.length));
 		css = bom + remote.join("") + body;
+		if (output_path === "-") {
+			process.stdout.write(css);
+			return;
+		}
 
 		fs.writeFile(output_path, css, function (err) {
 			if (!err) {

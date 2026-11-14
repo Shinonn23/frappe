@@ -2,6 +2,7 @@
 # License: MIT. See LICENSE
 
 import functools
+import io
 import logging
 import os
 
@@ -10,7 +11,8 @@ from werkzeug.exceptions import HTTPException, NotFound
 from werkzeug.middleware.profiler import ProfilerMiddleware
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.middleware.shared_data import SharedDataMiddleware
-from werkzeug.wrappers import Request, Response
+from werkzeug.wrappers import Request as WerkzeugRequest
+from werkzeug.wrappers import Response
 from werkzeug.wsgi import ClosingIterator
 
 import frappe
@@ -23,13 +25,21 @@ import frappe.utils.response
 from frappe import _
 from frappe.auth import SAFE_HTTP_METHODS, UNSAFE_HTTP_METHODS, HTTPRequest, check_request_ip, validate_auth
 from frappe.integrations.oauth2 import get_resource_url, handle_wellknown, is_oauth_metadata_enabled
-from frappe.middlewares import StaticDataMiddleware
 from frappe.permissions import handle_does_not_exist_error
 from frappe.utils import CallbackManager, cint, get_site_name
 from frappe.utils.data import escape_html
 from frappe.utils.error import log_error, log_error_snapshot
 from frappe.website.page_renderers.error_page import ErrorPage
 from frappe.website.serve import get_response
+
+
+class Request(WerkzeugRequest):
+	def _get_file_stream(self, total_content_length, content_type, filename=None, content_length=None):
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+		if gcs_storage.enabled():
+			return io.BytesIO()
+		return super()._get_file_stream(total_content_length, content_type, filename, content_length)
 
 _site = None
 _sites_path = os.environ.get("SITES_PATH", ".")
@@ -163,6 +173,14 @@ def application(request: Request):
 		elif request.path.startswith("/private/files/"):
 			response = frappe.utils.response.download_private_file(request.path)
 
+		elif request.path.startswith("/files/") and request.method in ("GET", "HEAD"):
+			from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
+
+			if gcs_storage.enabled():
+				response = frappe.utils.response.send_gcs_file(request.path)
+			else:
+				response = frappe.utils.response.send_public_file(request.path)
+
 		elif request.path == "/.well-known/security.txt" and request.method == "GET":
 			if request.scheme != "https":
 				raise NotFound
@@ -230,6 +248,11 @@ def init_request(request):
 		else:
 			raise frappe.SessionStopped("Session Stopped")
 
+	from frappe.integrations.doctype.google_cloud_storage_settings.cutover_lock import register_writer
+
+	# Acquire the cutover guard before multipart parsing chooses a storage backend.
+	register_writer()
+
 	if request.path.startswith("/api/method/upload_file"):
 		from frappe.core.api.file import get_max_file_size
 
@@ -257,7 +280,8 @@ def setup_read_only_mode():
 	frappe.flags.read_only = True
 
 	# If replica is available then just connect replica, else setup read only transaction.
-	if frappe.conf.read_from_replica:
+	# Attachment visibility and cutover state must not come from a lagging replica.
+	if frappe.conf.read_from_replica and not cint(frappe.conf.get("gcs_coordinated_cutover")):
 		frappe.connect_replica()
 	else:
 		frappe.db.begin(read_only=True)
@@ -570,7 +594,5 @@ def application_with_statics():
 	global application, _sites_path
 
 	application = SharedDataMiddleware(application, {"/assets": str(os.path.join(_sites_path, "assets"))})
-
-	application = StaticDataMiddleware(application, {"/files": str(os.path.abspath(_sites_path))})
 
 	return application

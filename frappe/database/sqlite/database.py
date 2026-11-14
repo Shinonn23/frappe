@@ -491,6 +491,8 @@ class SQLiteDatabase(SQLiteExceptionUtil, Database):
 
 	def commit(self, chain=None):
 		"""Commit current transaction. Calls SQL `COMMIT`."""
+		if getattr(self, "_gcs_rollback_failed", False) is True:
+			raise RuntimeError("A GCS savepoint rollback failed; roll back the entire transaction")
 		if not self._conn:
 			self.connect()
 
@@ -498,14 +500,16 @@ class SQLiteDatabase(SQLiteExceptionUtil, Database):
 			warnings.warn(message=TRANSACTION_DISABLED_MSG, stacklevel=2)
 			return
 
-		self.before_rollback.reset()
-		self.after_rollback.reset()
-
 		self.before_commit.run()
 
 		self._conn.commit()
+		self.before_rollback.reset()
+		self.after_rollback.reset()
 		self.transaction_writes = 0
 		self.begin()  # explicitly start a new transaction
+		self._gcs_savepoints = []
+		self._gcs_savepoint_offsets = {}
+		self._gcs_overwrite_history = []
 
 		self.after_commit.run()
 
@@ -515,6 +519,9 @@ class SQLiteDatabase(SQLiteExceptionUtil, Database):
 			self.connect()
 		if save_point:
 			self.sql(f"rollback to savepoint {save_point}")
+			self._rollback_gcs_savepoint(save_point)
+			if save_point in getattr(self, "_gcs_savepoints", []):
+				self._gcs_savepoints = self._gcs_savepoints[: self._gcs_savepoints.index(save_point) + 1]
 		elif not self._disable_transaction_control:
 			self.before_commit.reset()
 			self.after_commit.reset()
@@ -523,8 +530,17 @@ class SQLiteDatabase(SQLiteExceptionUtil, Database):
 
 			self._conn.rollback()
 			self.begin()
+			self._gcs_savepoints = []
 
-			self.after_rollback.run()
+			try:
+				self.after_rollback.run()
+			except Exception:
+				if getattr(self, "_gcs_rollback_failed", False) is True or getattr(frappe.local, "gcs_overwrites", None):
+					self._gcs_rollback_failed = True
+				raise
+			self._gcs_savepoint_offsets = {}
+			self._gcs_overwrite_history = []
+			self._gcs_rollback_failed = False
 		else:
 			warnings.warn(message=TRANSACTION_DISABLED_MSG, stacklevel=2)
 

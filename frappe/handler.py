@@ -128,6 +128,9 @@ def web_logout():
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 def upload_file():
+	from frappe.integrations.doctype.google_cloud_storage_settings.cutover_lock import register_writer
+
+	register_writer()
 	user = None
 	if frappe.session.user == "Guest":
 		if frappe.get_system_settings("allow_guests_to_upload_files"):
@@ -178,8 +181,53 @@ def upload_file():
 	if "file" in files:
 		file = files["file"]
 		filename = file.filename
+		from frappe.integrations.doctype.google_cloud_storage_settings import storage as gcs_storage
 
-		if frappe.form_dict.get("chunk_index") is not None:
+		if gcs_storage.enabled():
+			if cint(frappe.form_dict.get("total_chunk_count")) > 1:
+				from frappe.core.api.file import get_max_file_size
+				from frappe.integrations.doctype.google_cloud_storage_settings.chunk_upload import (
+					remove_staged_chunks,
+					stage_chunk,
+				)
+
+				bucket, prefix = gcs_storage.staging_bucket()
+				context = {
+					"filename": filename,
+					"doctype": doctype,
+					"docname": docname,
+					"fieldname": fieldname,
+					"folder": folder,
+					"private": cint(is_private),
+					"method": method,
+					"file_url": file_url,
+					"optimize": optimize,
+					"max_width": frappe.form_dict.max_width,
+					"max_height": frappe.form_dict.max_height,
+				}
+				try:
+					content, objects = stage_chunk(
+						bucket, prefix, session=frappe.session.sid or frappe.session.user,
+						upload_id=frappe.form_dict.get("upload_id"), context=context,
+						index=frappe.form_dict.chunk_index, count=frappe.form_dict.total_chunk_count,
+						offset=frappe.form_dict.chunk_byte_offset, total_size=frappe.form_dict.total_file_size,
+						content=file.stream.read(), max_size=get_max_file_size(),
+					)
+				except ValueError as exc:
+					frappe.throw(_("Invalid chunked upload: {0}").format(str(exc)))
+				if content is None:
+					return
+
+				def cleanup_chunks():
+					try:
+						remove_staged_chunks(bucket, objects)
+					except Exception:
+						frappe.logger("gcs_file_storage").exception("Unable to remove staged upload chunks")
+
+				frappe.db.after_commit.add(cleanup_chunks)
+			else:
+				content = file.stream.read()
+		elif frappe.form_dict.get("chunk_index") is not None:
 			current_chunk = int(frappe.form_dict.chunk_index)
 			total_chunks = int(frappe.form_dict.total_chunk_count)
 			offset = int(frappe.form_dict.chunk_byte_offset)
@@ -188,16 +236,17 @@ def upload_file():
 			current_chunk = 0
 			total_chunks = 1
 
-		temp_path = Path(get_files_path(".temp-" + get_safe_file_name(filename), is_private=is_private))
-		with temp_path.open("ab" if current_chunk > 0 else "wb") as f:
-			total_file_size = frappe.form_dict.total_file_size or 0
-			f.seek(offset)
-			f.write(file.stream.read())
-			if not f.tell() >= int(total_file_size) or current_chunk != total_chunks - 1:
-				return
+		if not gcs_storage.enabled():
+			temp_path = Path(get_files_path(".temp-" + get_safe_file_name(filename), is_private=is_private))
+			with temp_path.open("ab" if current_chunk > 0 else "wb") as f:
+				total_file_size = frappe.form_dict.total_file_size or 0
+				f.seek(offset)
+				f.write(file.stream.read())
+				if not f.tell() >= int(total_file_size) or current_chunk != total_chunks - 1:
+					return
 
-		content = temp_path.read_bytes()
-		temp_path.unlink()
+			content = temp_path.read_bytes()
+			temp_path.unlink()
 		content_type = guess_type(filename)[0]
 		if optimize and content_type and content_type.startswith("image/"):
 			args = {"content": content, "content_type": content_type}
