@@ -9,15 +9,32 @@
  "field_order": [
   "tab_profile",
   "role_profile",
+  "profile_kind",
+  "duties",
+  "designations_html",
   "tab_roles",
   "roles_html",
   "roles",
   "additional_permissions_html",
   "tab_approvals",
   "workflow_permissions_html",
+  "approval_grants",
+  "approval_scope_values",
+  "coverage_section",
+  "coverage_html",
   "tab_notifications",
   "notifications_html",
+  "handoff_section",
+  "handoff_grants",
   "tab_visibility",
+  "record_rules_section",
+  "visibility_rules",
+  "visibility_values",
+  "visibility_applicable",
+  "scope_conditions_section",
+  "own_documents_only_on",
+  "audit_reader",
+  "service_equipment_assets_only",
   "tab_holders",
   "holders_html"
  ],
@@ -34,6 +51,28 @@
    "label": "Role Name",
    "reqd": 1,
    "unique": 1
+  },
+  {
+   "default": "Position",
+   "description": "Position: a Designation points to it. Duty: added to an Employee on top of the position. Base: the one profile every employee has. Mandatory once the seed has filled every profile (PR 7).",
+   "fieldname": "profile_kind",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Profile Kind",
+   "options": "Position\nDuty\nBase"
+  },
+  {
+   "description": "What the position does.",
+   "fieldname": "duties",
+   "fieldtype": "Small Text",
+   "label": "Duties"
+  },
+  {
+   "fieldname": "designations_html",
+   "fieldtype": "HTML",
+   "label": "Designations",
+   "read_only": 1
   },
   {
    "fieldname": "tab_roles",
@@ -72,6 +111,32 @@
    "label": "Workflow Permissions"
   },
   {
+   "description": "One row per step: the step, the limit and the scope. A row is the right to decide the step; also the right to make a Quotation without approval (Maker Limit steps).",
+   "fieldname": "approval_grants",
+   "fieldtype": "Table",
+   "hidden": 1,
+   "label": "Approval Grants",
+   "options": "Role Profile Approval"
+  },
+  {
+   "fieldname": "approval_scope_values",
+   "fieldtype": "Table",
+   "hidden": 1,
+   "label": "Approval Scope Values",
+   "options": "Role Profile Scope Value"
+  },
+  {
+   "fieldname": "coverage_section",
+   "fieldtype": "Section Break",
+   "label": "Coverage"
+  },
+  {
+   "fieldname": "coverage_html",
+   "fieldtype": "HTML",
+   "label": "Coverage",
+   "read_only": 1
+  },
+  {
    "fieldname": "tab_notifications",
    "fieldtype": "Tab Break",
    "label": "Notifications"
@@ -82,9 +147,73 @@
    "label": "Workflow Notifications"
   },
   {
+   "fieldname": "handoff_section",
+   "fieldtype": "Section Break",
+   "label": "Hand-off tasks"
+  },
+  {
+   "description": "Who receives the task for a hand-off step.",
+   "fieldname": "handoff_grants",
+   "fieldtype": "Table",
+   "label": "Hand-off Grants",
+   "options": "Role Profile Handoff"
+  },
+  {
    "fieldname": "tab_visibility",
    "fieldtype": "Tab Break",
    "label": "Visibility"
+  },
+  {
+   "fieldname": "record_rules_section",
+   "fieldtype": "Section Break",
+   "label": "Record rules"
+  },
+  {
+   "description": "Which records of a DocType the holders of this profile see.",
+   "fieldname": "visibility_rules",
+   "fieldtype": "Table",
+   "label": "Visibility Rules",
+   "options": "Role Profile Visibility Rule"
+  },
+  {
+   "fieldname": "visibility_values",
+   "fieldtype": "Table",
+   "hidden": 1,
+   "label": "Visibility Values",
+   "options": "Role Profile Visibility Value"
+  },
+  {
+   "fieldname": "visibility_applicable",
+   "fieldtype": "Table",
+   "hidden": 1,
+   "label": "Visibility DocTypes",
+   "options": "Role Profile Visibility DocType"
+  },
+  {
+   "fieldname": "scope_conditions_section",
+   "fieldtype": "Section Break",
+   "label": "Scope conditions"
+  },
+  {
+   "description": "DocTypes where the holders see only their own documents.",
+   "fieldname": "own_documents_only_on",
+   "fieldtype": "Table MultiSelect",
+   "label": "Own Documents Only On",
+   "options": "Own Document DocType"
+  },
+  {
+   "description": "Legacy metadata. Audit access is granted by the Executive Audit Reader role.",
+   "fieldname": "audit_reader",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Audit Reader"
+  },
+  {
+   "description": "Retired metadata; this field does not grant or restrict access.",
+   "fieldname": "service_equipment_assets_only",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Service Equipment Assets Only"
   },
   {
    "fieldname": "tab_holders",
@@ -105,7 +234,7 @@
    "table_fieldname": "role_profiles"
   }
  ],
- "modified": "2025-11-15 20:00:18.844434",
+ "modified": "2026-11-20 22:42:00.000000",
  "modified_by": "Administrator",
  "module": "Core",
  "name": "Role Profile",

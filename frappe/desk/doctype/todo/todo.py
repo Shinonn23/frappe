@@ -38,6 +38,9 @@ class ToDo(Document):
 	DocType = "ToDo"
 
 	def validate(self):
+		from frappe.desk.doctype.todo.system_tasks import validate_system_todo
+
+		validate_system_todo(self)
 		self._assignment = None
 		if self.is_new():
 			if self.assigned_by == self.allocated_to:
@@ -72,6 +75,9 @@ class ToDo(Document):
 		self.update_in_reference()
 
 	def on_trash(self):
+		from frappe.desk.doctype.todo.system_tasks import validate_trash_system_todo
+
+		validate_trash_system_todo(self)
 		self.delete_communication_links()
 		self.update_in_reference()
 
@@ -144,6 +150,8 @@ class ToDo(Document):
 # NOTE: todo is viewable if a user is an owner, or set as assigned_to value, or has any role that is allowed to access ToDo doctype.
 def on_doctype_update():
 	frappe.db.add_index("ToDo", ["reference_type", "reference_name"])
+	if frappe.db.has_column("ToDo", "task_doctype") and frappe.db.has_column("ToDo", "task_docname"):
+		frappe.db.add_index("ToDo", ["task_doctype", "task_docname"])
 
 
 def get_permission_query_conditions(user):

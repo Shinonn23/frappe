@@ -1,0 +1,201 @@
+{
+ "doctype": "DocType",
+ "name": "Approval Grant",
+ "module": "Workflow",
+ "autoname": "hash",
+ "allow_rename": 0,
+ "allow_import": 0,
+ "in_create": 1,
+ "editable_grid": 0,
+ "title_field": "step",
+ "search_fields": "user,step,source_profile",
+ "field_order": [
+  "user",
+  "step",
+  "company",
+  "column_break_source",
+  "source_profile",
+  "source_kind",
+  "limit_section",
+  "limit_kind",
+  "max_amount",
+  "max_percent",
+  "max_grade",
+  "column_break_scope",
+  "scope_kind",
+  "scope_source",
+  "scope_values",
+  "include_descendants",
+  "notify_section",
+  "ask_mode",
+  "channel",
+  "grant_key"
+ ],
+ "fields": [
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "step",
+   "fieldtype": "Link",
+   "label": "Step",
+   "options": "Approval Step",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "read_only": 1,
+   "description": "Empty = every company."
+  },
+  {
+   "fieldname": "column_break_source",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "source_profile",
+   "fieldtype": "Link",
+   "label": "Source Profile",
+   "options": "Role Profile",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "source_kind",
+   "fieldtype": "Select",
+   "label": "Source Kind",
+   "options": "Position\nDuty\nBase\nUnknown",
+   "read_only": 1
+  },
+  {
+   "fieldname": "limit_section",
+   "fieldtype": "Section Break",
+   "label": "Limit"
+  },
+  {
+   "fieldname": "limit_kind",
+   "fieldtype": "Select",
+   "label": "Limit Kind",
+   "options": "None\nAmount\nPercent\nAmount+Percent\nGrade",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_amount",
+   "fieldtype": "Currency",
+   "label": "Max Amount",
+   "read_only": 1,
+   "description": "Empty = no limit."
+  },
+  {
+   "fieldname": "max_percent",
+   "fieldtype": "Percent",
+   "label": "Max Percent",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_grade",
+   "fieldtype": "Int",
+   "label": "Max Grade",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_scope",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "scope_kind",
+   "fieldtype": "Select",
+   "label": "Scope Kind",
+   "options": "All\nCompany\nDepartment\nWarehouse\nItem Group\nProduct Group\nCustomer Group\nPrice List\nEmployee",
+   "read_only": 1
+  },
+  {
+   "fieldname": "scope_source",
+   "fieldtype": "Select",
+   "label": "Scope Source",
+   "options": "All\nFixed values\nMy Department\nMy Company\nWarehouses of my Department\nWarehouses with no Department\nMy Team",
+   "read_only": 1
+  },
+  {
+   "fieldname": "scope_values",
+   "fieldtype": "Small Text",
+   "label": "Scope Values",
+   "read_only": 1,
+   "description": "JSON list of [DocType, value]."
+  },
+  {
+   "fieldname": "include_descendants",
+   "fieldtype": "Check",
+   "label": "Include Descendants",
+   "read_only": 1
+  },
+  {
+   "fieldname": "notify_section",
+   "fieldtype": "Section Break",
+   "label": "Asking"
+  },
+  {
+   "fieldname": "ask_mode",
+   "fieldtype": "Select",
+   "label": "Ask Mode",
+   "options": "Ask\nStand-in",
+   "read_only": 1
+  },
+  {
+   "fieldname": "channel",
+   "fieldtype": "Select",
+   "label": "Channel",
+   "options": "Bell\nEmail\nBoth",
+   "read_only": 1
+  },
+  {
+   "fieldname": "grant_key",
+   "fieldtype": "Data",
+   "label": "Grant Key",
+   "read_only": 1,
+   "hidden": 1,
+   "description": "user + step + company + scope: one row each."
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "export": 1
+  },
+  {
+   "role": "IT Access Administrator",
+   "read": 1,
+   "report": 1,
+   "export": 1
+  },
+  {
+   "role": "Managing Director",
+   "read": 1,
+   "report": 1,
+   "export": 1
+  },
+  {
+   "role": "Chief Executive Officer",
+   "read": 1,
+   "report": 1,
+   "export": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "modified": "2026-11-19 12:00:00.000000"
+}

@@ -1,0 +1,149 @@
+{
+ "doctype": "DocType",
+ "name": "Role Profile Approval",
+ "module": "Core",
+ "istable": 1,
+ "editable_grid": 1,
+ "field_order": [
+  "step",
+  "doctype_label",
+  "state_label",
+  "limit_kind",
+  "max_amount",
+  "max_percent",
+  "max_grade",
+  "company",
+  "column_break_scope",
+  "scope_kind",
+  "scope_source",
+  "scope_values_summary",
+  "include_descendants",
+  "ask_mode",
+  "channel",
+  "rule_key"
+ ],
+ "fields": [
+  {
+   "fieldname": "step",
+   "fieldtype": "Link",
+   "label": "Step",
+   "options": "Approval Step",
+   "reqd": 1,
+   "in_list_view": 1,
+   "link_filters": "[[\"Approval Step\", \"kind\", \"in\", [\"Approval\", \"Maker Limit\"]], [\"Approval Step\", \"retired\", \"=\", 0]]",
+   "description": "Approval or Maker Limit steps that are not retired."
+  },
+  {
+   "fieldname": "doctype_label",
+   "fieldtype": "Data",
+   "label": "Document",
+   "read_only": 1,
+   "fetch_from": "step.reference_doctype",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "state_label",
+   "fieldtype": "Data",
+   "label": "State",
+   "read_only": 1,
+   "fetch_from": "step.state",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "limit_kind",
+   "fieldtype": "Select",
+   "label": "Limit Kind",
+   "options": "None\nAmount\nPercent\nAmount+Percent\nGrade",
+   "fetch_from": "step.limit_kind",
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_amount",
+   "fieldtype": "Currency",
+   "label": "Max Amount",
+   "in_list_view": 1,
+   "depends_on": "eval:['Amount','Amount+Percent'].includes(doc.limit_kind)",
+   "description": "Blank = no limit. Company currency."
+  },
+  {
+   "fieldname": "max_percent",
+   "fieldtype": "Percent",
+   "label": "Max Percent",
+   "depends_on": "eval:['Percent','Amount+Percent'].includes(doc.limit_kind)",
+   "description": "For example the Quotation discount."
+  },
+  {
+   "fieldname": "max_grade",
+   "fieldtype": "Int",
+   "label": "Max Grade",
+   "depends_on": "eval:doc.limit_kind=='Grade'",
+   "description": "The highest grade this Profile decides."
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "in_list_view": 1,
+   "description": "Blank = every company."
+  },
+  {
+   "fieldname": "column_break_scope",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "scope_kind",
+   "fieldtype": "Select",
+   "label": "Scope",
+   "options": "All\nCompany\nDepartment\nWarehouse\nItem Group\nProduct Group\nCustomer Group\nPrice List\nEmployee",
+   "default": "All",
+   "description": "Only a scope the step allows (Approval Step: Allowed Scopes)."
+  },
+  {
+   "fieldname": "scope_source",
+   "fieldtype": "Select",
+   "label": "Scope Source",
+   "options": "All\nFixed values\nMy Department\nMy Company\nWarehouses of my Department\nWarehouses with no Department\nMy Team",
+   "default": "All"
+  },
+  {
+   "fieldname": "scope_values_summary",
+   "fieldtype": "Small Text",
+   "label": "Scope Values",
+   "read_only": 1,
+   "description": "Fixed values are kept in the Profile's Approval Scope Values, by Rule Key."
+  },
+  {
+   "fieldname": "include_descendants",
+   "fieldtype": "Check",
+   "label": "Include Descendants",
+   "default": "1"
+  },
+  {
+   "fieldname": "ask_mode",
+   "fieldtype": "Select",
+   "label": "Ask Mode",
+   "options": "Ask\nStand-in",
+   "default": "Ask",
+   "description": "Ask: asked and can act. Stand-in: can act, not asked."
+  },
+  {
+   "fieldname": "channel",
+   "fieldtype": "Select",
+   "label": "Channel",
+   "options": "Bell\nEmail\nBoth",
+   "description": "Blank = the step's default."
+  },
+  {
+   "fieldname": "rule_key",
+   "fieldtype": "Data",
+   "label": "Rule Key",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1
+  }
+ ],
+ "permissions": [],
+ "modified": "2026-11-19 12:00:00.000000"
+}

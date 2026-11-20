@@ -1,0 +1,79 @@
+{
+ "doctype": "DocType",
+ "name": "Role Profile Handoff",
+ "module": "Core",
+ "istable": 1,
+ "editable_grid": 1,
+ "field_order": [
+  "step",
+  "handoff_rule",
+  "company",
+  "column_break_scope",
+  "scope_source",
+  "scope_values_summary",
+  "ask_mode",
+  "rule_key"
+ ],
+ "fields": [
+  {
+   "fieldname": "step",
+   "fieldtype": "Link",
+   "label": "Hand-off Step",
+   "options": "Approval Step",
+   "in_list_view": 1,
+   "link_filters": "[[\"Approval Step\", \"kind\", \"=\", \"Handoff\"], [\"Approval Step\", \"retired\", \"=\", 0]]",
+   "description": "A step of the hand-off catalog. Leave blank to name a Handoff Rule a site made."
+  },
+  {
+   "fieldname": "handoff_rule",
+   "fieldtype": "Link",
+   "label": "Handoff Rule",
+   "options": "Handoff Rule",
+   "in_list_view": 1,
+   "description": "A rule a site created (it has no catalog step). Name a step or a rule."
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "in_list_view": 1,
+   "description": "Blank = every company."
+  },
+  {
+   "fieldname": "column_break_scope",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "scope_source",
+   "fieldtype": "Select",
+   "label": "Scope Source",
+   "options": "All\nFixed values\nMy Department\nWarehouses of my Department\nWarehouses with no Department",
+   "default": "All",
+   "description": "Warehouse or Department only."
+  },
+  {
+   "fieldname": "scope_values_summary",
+   "fieldtype": "Small Text",
+   "label": "Scope Values",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ask_mode",
+   "fieldtype": "Select",
+   "label": "Ask Mode",
+   "options": "Ask\nStand-in",
+   "default": "Ask"
+  },
+  {
+   "fieldname": "rule_key",
+   "fieldtype": "Data",
+   "label": "Rule Key",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1
+  }
+ ],
+ "permissions": [],
+ "modified": "2026-11-07 12:00:00.000000"
+}

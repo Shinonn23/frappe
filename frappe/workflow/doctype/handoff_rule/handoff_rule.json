@@ -1,0 +1,169 @@
+{
+ "doctype": "DocType",
+ "name": "Handoff Rule",
+ "module": "Workflow",
+ "autoname": "field:title",
+ "naming_rule": "By fieldname",
+ "allow_rename": 0,
+ "track_changes": 1,
+ "field_order": [
+  "enabled",
+  "title",
+  "step",
+  "column_break_main",
+  "action_label",
+  "source_section",
+  "source_doctype",
+  "date_field",
+  "column_break_when",
+  "condition",
+  "next_section",
+  "target_doctype",
+  "column_break_next",
+  "make_method",
+  "who_section",
+  "roles",
+  "column_break_who",
+  "departments",
+  "department_field"
+ ],
+ "fields": [
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "1",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1,
+   "description": "Names the rule, for example Sales Order to Delivery Note."
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "action_label",
+   "fieldtype": "Data",
+   "label": "Action Label",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "The button the task shows, in English, for example Create Delivery Note."
+  },
+  {
+   "fieldname": "source_section",
+   "fieldtype": "Section Break",
+   "label": "When"
+  },
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Link",
+   "label": "Source DocType",
+   "options": "DocType",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "The document that is done. A task is made for each document of this DocType."
+  },
+  {
+   "fieldname": "date_field",
+   "fieldtype": "Data",
+   "label": "Due Date Field",
+   "description": "Field of the source document that holds the due date (optional)."
+  },
+  {
+   "fieldname": "column_break_when",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "condition",
+   "fieldtype": "Code",
+   "label": "Condition",
+   "options": "Python",
+   "reqd": 1,
+   "description": "An expression on doc, for example doc.docstatus == 1 and doc.per_delivered < 100. The task stays open while it is true and closes by itself when it is false."
+  },
+  {
+   "fieldname": "next_section",
+   "fieldtype": "Section Break",
+   "label": "Next Document"
+  },
+  {
+   "fieldname": "target_doctype",
+   "fieldtype": "Link",
+   "label": "Target DocType",
+   "options": "DocType",
+   "description": "The document the team makes next. Only users who may create it get the task."
+  },
+  {
+   "fieldname": "column_break_next",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "make_method",
+   "fieldtype": "Data",
+   "label": "Make Method",
+   "description": "Whitelisted mapper taking source_name (used by open_mapped_doc), for example erpnext.selling.doctype.sales_order.sales_order.make_delivery_note."
+  },
+  {
+   "fieldname": "who_section",
+   "fieldtype": "Section Break",
+   "label": "Who",
+   "description": "Roles name the team; Department and Designation narrow it. If the narrowing leaves nobody, every holder of a role gets the task. Never a named user."
+  },
+  {
+   "fieldname": "roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Roles",
+   "options": "Handoff Rule Role",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_who",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "departments",
+   "fieldtype": "Table MultiSelect",
+   "label": "Departments",
+   "options": "Handoff Rule Department"
+  },
+  {
+   "fieldname": "department_field",
+   "fieldtype": "Data",
+   "label": "Department Field",
+   "description": "Field of the source document that holds a Department; the user's Employee must belong to that Department."
+  },
+  {
+   "fieldname": "step",
+   "fieldtype": "Data",
+   "label": "Hand-off Step",
+   "in_standard_filter": 1,
+   "description": "Id of the hand-off step in the Approval Step catalog, for example ho_qt_so. A rule made on a site may leave it empty and is then named by its title."
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "print": 1,
+   "email": 1,
+   "report": 1,
+   "share": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "title_field": "title"
+}

@@ -1,0 +1,91 @@
+{
+ "doctype": "DocType",
+ "name": "Role Profile Visibility Rule",
+ "module": "Core",
+ "istable": 1,
+ "editable_grid": 1,
+ "field_order": [
+  "allow",
+  "value_source",
+  "values_summary",
+  "include_descendants",
+  "column_break_applies",
+  "applies_to_all",
+  "applicable_summary",
+  "creator_sees_own",
+  "is_default",
+  "rule_key"
+ ],
+ "fields": [
+  {
+   "fieldname": "allow",
+   "fieldtype": "Link",
+   "label": "Allow",
+   "options": "DocType",
+   "reqd": 1,
+   "in_list_view": 1,
+   "link_filters": "[[\"DocType\", \"istable\", \"=\", 0]]",
+   "description": "The DocType whose records the rule limits. Never a child table."
+  },
+  {
+   "fieldname": "value_source",
+   "fieldtype": "Select",
+   "label": "Values From",
+   "options": "All\nFixed values\nMy Department\nMy Company\nWarehouses of my Department\nWarehouses with no Department\nEmployee's own Employee\nMy Territory",
+   "default": "Fixed values",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "values_summary",
+   "fieldtype": "Small Text",
+   "label": "Values",
+   "read_only": 1,
+   "description": "Fixed values are kept in the Profile's Visibility Values, by Rule Key."
+  },
+  {
+   "fieldname": "include_descendants",
+   "fieldtype": "Check",
+   "label": "Include Descendants",
+   "default": "1"
+  },
+  {
+   "fieldname": "column_break_applies",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "applies_to_all",
+   "fieldtype": "Check",
+   "label": "Applies To All DocTypes",
+   "default": "1",
+   "description": "Unticked: the DocTypes are kept in the Profile's Visibility DocTypes, by Rule Key."
+  },
+  {
+   "fieldname": "applicable_summary",
+   "fieldtype": "Small Text",
+   "label": "Applies To",
+   "read_only": 1
+  },
+  {
+   "fieldname": "creator_sees_own",
+   "fieldtype": "Check",
+   "label": "Creator always sees own records",
+   "default": "1",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "is_default",
+   "fieldtype": "Check",
+   "label": "Is Default"
+  },
+  {
+   "fieldname": "rule_key",
+   "fieldtype": "Data",
+   "label": "Rule Key",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1
+  }
+ ],
+ "permissions": [],
+ "modified": "2026-11-17 12:00:00.000000"
+}

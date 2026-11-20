@@ -1,0 +1,225 @@
+{
+ "doctype": "DocType",
+ "name": "Approval Step",
+ "module": "Workflow",
+ "autoname": "field:step_id",
+ "naming_rule": "By fieldname",
+ "allow_rename": 0,
+ "allow_import": 0,
+ "in_create": 1,
+ "title_field": "step_id",
+ "search_fields": "reference_doctype,state,flow,kind",
+ "field_order": [
+  "step_id",
+  "kind",
+  "flow",
+  "sequence",
+  "retired",
+  "column_break_where",
+  "reference_doctype",
+  "state",
+  "also_states",
+  "actions",
+  "trigger",
+  "section_limit",
+  "amount_field",
+  "limit_kind",
+  "allowed_scopes",
+  "column_break_scope",
+  "scope_fields",
+  "allow_edit",
+  "needs_flags",
+  "section_rules",
+  "reads_all_in_scope",
+  "privileged",
+  "default_channel",
+  "column_break_note",
+  "note"
+ ],
+ "fields": [
+  {
+   "fieldname": "step_id",
+   "fieldtype": "Data",
+   "label": "Step ID",
+   "reqd": 1,
+   "unique": 1,
+   "set_only_once": 1,
+   "in_list_view": 1,
+   "description": "The permanent key. Written in code (workflows/steps.py); never renamed or deleted."
+  },
+  {
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "label": "Kind",
+   "options": "Approval\nMaker Limit\nHandoff\nSystem\nMaker\nCancel\nApply",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "flow",
+   "fieldtype": "Select",
+   "label": "Flow",
+   "options": "P2P\nO2C\nStock\nBorrowing\nService\nHR\nAccess",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "sequence",
+   "fieldtype": "Int",
+   "label": "Sequence",
+   "in_list_view": 1,
+   "description": "The order inside the flow."
+  },
+  {
+   "fieldname": "retired",
+   "fieldtype": "Check",
+   "label": "Retired",
+   "in_standard_filter": 1,
+   "description": "A step no longer used keeps its row and is retired."
+  },
+  {
+   "fieldname": "column_break_where",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reference_doctype",
+   "fieldtype": "Data",
+   "label": "Document Type",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "state",
+   "fieldtype": "Data",
+   "label": "Workflow State",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "also_states",
+   "fieldtype": "Small Text",
+   "label": "Other States",
+   "description": "One per line. The step covers these too."
+  },
+  {
+   "fieldname": "actions",
+   "fieldtype": "Small Text",
+   "label": "Actions",
+   "description": "One per line. Blank = every decision out of the state."
+  },
+  {
+   "fieldname": "trigger",
+   "fieldtype": "Small Text",
+   "label": "Trigger",
+   "description": "Hand-off steps: what makes the work (no state)."
+  },
+  {
+   "fieldname": "section_limit",
+   "fieldtype": "Section Break",
+   "label": "Limit and Scope"
+  },
+  {
+   "fieldname": "amount_field",
+   "fieldtype": "Data",
+   "label": "Amount Field"
+  },
+  {
+   "fieldname": "limit_kind",
+   "fieldtype": "Select",
+   "label": "Limit Kind",
+   "options": "None\nAmount\nPercent\nAmount+Percent\nGrade",
+   "default": "None"
+  },
+  {
+   "fieldname": "allowed_scopes",
+   "fieldtype": "Small Text",
+   "label": "Allowed Scopes",
+   "description": "One per line. Blank = All only."
+  },
+  {
+   "fieldname": "column_break_scope",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "scope_fields",
+   "fieldtype": "Code",
+   "label": "Scope Fields",
+   "options": "JSON",
+   "description": "Scope type -> the document field(s) the value is read from."
+  },
+  {
+   "fieldname": "allow_edit",
+   "fieldtype": "Data",
+   "label": "Edit Role",
+   "description": "The work role that edits the document in this state."
+  },
+  {
+   "fieldname": "needs_flags",
+   "fieldtype": "Small Text",
+   "label": "Needs Flags",
+   "description": "One per line. Flags the approver's Profile needs."
+  },
+  {
+   "fieldname": "section_rules",
+   "fieldtype": "Section Break",
+   "label": "Rules"
+  },
+  {
+   "fieldname": "reads_all_in_scope",
+   "fieldtype": "Check",
+   "label": "Reads All In Scope"
+  },
+  {
+   "fieldname": "privileged",
+   "fieldtype": "Check",
+   "label": "Privileged",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "default_channel",
+   "fieldtype": "Select",
+   "label": "Default Channel",
+   "options": "Bell\nEmail\nBoth",
+   "default": "Bell"
+  },
+  {
+   "fieldname": "column_break_note",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "export": 1
+  },
+  {
+   "role": "IT Access Administrator",
+   "read": 1,
+   "report": 1,
+   "export": 1
+  },
+  {
+   "role": "Managing Director",
+   "read": 1,
+   "report": 1,
+   "export": 1
+  },
+  {
+   "role": "Chief Executive Officer",
+   "read": 1,
+   "report": 1,
+   "export": 1
+  }
+ ],
+ "sort_field": "flow",
+ "sort_order": "ASC",
+ "modified": "2026-11-07 12:00:00.000000"
+}

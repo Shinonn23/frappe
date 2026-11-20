@@ -1,0 +1,31 @@
+{
+ "doctype": "DocType",
+ "name": "Role Profile Visibility DocType",
+ "module": "Core",
+ "istable": 1,
+ "editable_grid": 1,
+ "field_order": [
+  "rule_key",
+  "applicable_doctype"
+ ],
+ "fields": [
+  {
+   "fieldname": "rule_key",
+   "fieldtype": "Data",
+   "label": "Rule Key",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "The record rule it belongs to."
+  },
+  {
+   "fieldname": "applicable_doctype",
+   "fieldtype": "Link",
+   "label": "Applicable DocType",
+   "options": "DocType",
+   "reqd": 1,
+   "in_list_view": 1
+  }
+ ],
+ "permissions": [],
+ "modified": "2026-11-07 12:00:00.000000"
+}

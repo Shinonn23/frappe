@@ -21,7 +21,8 @@
   "transition_rules",
   "transitions",
   "workflow_state_field",
-  "workflow_data"
+  "workflow_data",
+  "operation_policy_signature"
  ],
  "fields": [
   {
@@ -109,12 +110,20 @@
    "fieldtype": "JSON",
    "hidden": 1,
    "label": "Workflow Data"
+  },
+  {
+   "fieldname": "operation_policy_signature",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Managed Operation Policy Signature",
+   "no_copy": 1,
+   "read_only": 1
   }
  ],
  "icon": "workflow",
  "idx": 1,
  "links": [],
- "modified": "2024-03-23 16:04:04.849665",
+ "modified": "2026-11-20 22:42:00.000000",
  "modified_by": "Administrator",
  "module": "Workflow",
  "name": "Workflow",

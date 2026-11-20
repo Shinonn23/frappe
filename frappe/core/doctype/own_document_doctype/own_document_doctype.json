@@ -1,0 +1,23 @@
+{
+ "doctype": "DocType",
+ "name": "Own Document DocType",
+ "module": "Core",
+ "istable": 1,
+ "editable_grid": 1,
+ "field_order": [
+  "document_type"
+ ],
+ "fields": [
+  {
+   "fieldname": "document_type",
+   "fieldtype": "Link",
+   "label": "Document Type",
+   "options": "DocType",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "Only a DocType the code has an own-documents hook for (design 2, Scope conditions)."
+  }
+ ],
+ "permissions": [],
+ "modified": "2026-11-07 12:00:00.000000"
+}

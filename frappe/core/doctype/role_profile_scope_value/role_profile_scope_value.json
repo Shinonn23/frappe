@@ -1,0 +1,40 @@
+{
+ "doctype": "DocType",
+ "name": "Role Profile Scope Value",
+ "module": "Core",
+ "istable": 1,
+ "editable_grid": 1,
+ "field_order": [
+  "rule_key",
+  "scope_doctype",
+  "value"
+ ],
+ "fields": [
+  {
+   "fieldname": "rule_key",
+   "fieldtype": "Data",
+   "label": "Rule Key",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "The row of Approvals or Hand-off tasks."
+  },
+  {
+   "fieldname": "scope_doctype",
+   "fieldtype": "Link",
+   "label": "Scope DocType",
+   "options": "DocType",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "value",
+   "fieldtype": "Dynamic Link",
+   "label": "Value",
+   "options": "scope_doctype",
+   "reqd": 1,
+   "in_list_view": 1
+  }
+ ],
+ "permissions": [],
+ "modified": "2026-11-07 12:00:00.000000"
+}

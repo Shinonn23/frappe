@@ -75,6 +75,12 @@ def get_transitions(
 				continue
 			transitions.append(transition.as_dict())
 
+	if transitions:
+		for hook in frappe.get_hooks("workflow_transition_filters"):
+			transitions = frappe.get_attr(hook)(doc, transitions, workflow=workflow) or []
+			if not transitions:
+				break
+
 	return transitions
 
 
@@ -119,6 +125,7 @@ def evaluate_workflow_value(value, evaluate_as_expression, doc):
 @frappe.whitelist()
 def apply_workflow(doc: Document | str | dict, action: str):
 	"""Allow workflow action on the current doc"""
+	frappe.flags.applied_workflow_action = action
 	doc = frappe.get_doc(frappe.parse_json(doc))
 	doc.load_from_db()
 	workflow = get_workflow(doc.doctype)
